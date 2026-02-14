@@ -158,6 +158,7 @@ class TestPositionDiff:
             issuer_name="TEST CO",
             change_type=PositionChangeType.ADDED,
             shares_change_pct=1.0,  # Doubled
+            current_weight_pct=1.5,  # 1.5% of AUM — above 0.25% gate
         )
         assert d.is_significant_add is True
 
@@ -176,6 +177,7 @@ class TestPositionDiff:
             issuer_name="TEST CO",
             change_type=PositionChangeType.TRIMMED,
             shares_change_pct=-0.7,  # 70% cut
+            prior_weight_pct=0.8,  # 0.8% of AUM — above 0.25% gate
         )
         assert d.is_significant_trim is True
 

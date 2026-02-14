@@ -85,6 +85,17 @@ CREATE TABLE IF NOT EXISTS prices (
     PRIMARY KEY (ticker, price_date)
 );
 
+-- Price performance cache (1w, 1m, YTD, 1yr returns)
+CREATE TABLE IF NOT EXISTS price_performance (
+    ticker TEXT PRIMARY KEY,
+    current_price REAL,
+    return_1w REAL,
+    return_1m REAL,
+    return_ytd REAL,
+    return_1yr REAL,
+    fetched_at TEXT NOT NULL
+);
+
 -- Filing metadata (tracks which filings have been processed)
 CREATE TABLE IF NOT EXISTS filing_index (
     cik TEXT NOT NULL,
@@ -408,6 +419,98 @@ class HoldingsStore:
         )
         self._conn.commit()
 
+    def seed_cusip_cache(self, seed_path: Path) -> int:
+        """Pre-populate cusip_map from a bundled JSON seed file.
+
+        Only inserts CUSIPs that are **not already** in the table
+        (i.e. won't overwrite fresh OpenFIGI results).
+
+        The seed file format is::
+
+            {"60855R100": {"ticker": "MOH", "name": "...", "exchange": "US"}, ...}
+
+        Returns the number of new entries seeded.
+        """
+        import json
+
+        if not seed_path.exists():
+            logger.debug("No CUSIP seed file at %s", seed_path)
+            return 0
+
+        with open(seed_path) as f:
+            seed_data: dict[str, dict] = json.load(f)
+
+        if not seed_data:
+            return 0
+
+        # Find which CUSIPs are already in the table
+        existing = set(
+            r[0] for r in self._conn.execute(
+                "SELECT cusip FROM cusip_map",
+            ).fetchall()
+        )
+
+        now = datetime.now().isoformat()
+        new_rows = []
+        for cusip, info in seed_data.items():
+            if cusip in existing:
+                continue
+            new_rows.append((
+                cusip,
+                info.get("ticker"),
+                info.get("name"),
+                info.get("exchange"),
+                "Equity",
+                now,
+            ))
+
+        if new_rows:
+            self._conn.executemany(
+                """INSERT OR IGNORE INTO cusip_map
+                   (cusip, ticker, name, exchange,
+                    market_sector, fetched_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                new_rows,
+            )
+            self._conn.commit()
+
+        logger.info(
+            "Seeded %d CUSIP mappings from %s (%d already existed)",
+            len(new_rows), seed_path.name, len(existing),
+        )
+        return len(new_rows)
+
+    def export_cusip_seed(self, output_path: Path) -> int:
+        """Export cusip_map to a JSON seed file for bundling.
+
+        Returns the number of entries exported.
+        """
+        import json
+
+        rows = self._conn.execute(
+            "SELECT cusip, ticker, name, exchange "
+            "FROM cusip_map WHERE ticker IS NOT NULL",
+        ).fetchall()
+
+        seed = {
+            r["cusip"]: {
+                "ticker": r["ticker"],
+                "name": r["name"],
+                "exchange": r["exchange"],
+            }
+            for r in rows
+        }
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(seed, f, indent=2, sort_keys=True)
+
+        logger.info(
+            "Exported %d CUSIP mappings to %s",
+            len(seed), output_path,
+        )
+        return len(seed)
+
     # ------------------------------------------------------------------
     # Sector mapping
     # ------------------------------------------------------------------
@@ -495,6 +598,93 @@ class HoldingsStore:
                 (ticker, price_date.isoformat(), price, now)
                 for ticker, price in prices.items()
             ],
+        )
+        self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Price performance cache
+    # ------------------------------------------------------------------
+
+    def get_price_performance(
+        self, ticker: str, max_age_hours: int = 12,
+    ) -> dict | None:
+        """Get cached price performance if fresh enough.
+
+        Returns dict with current_price, return_1w, return_1m,
+        return_ytd, return_1yr, or None if stale/missing.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM price_performance WHERE ticker = ?",
+            (ticker,),
+        ).fetchone()
+        if not row:
+            return None
+
+        # Staleness check
+        fetched = datetime.fromisoformat(row["fetched_at"])
+        age_hours = (datetime.now() - fetched).total_seconds() / 3600
+        if age_hours > max_age_hours:
+            return None
+
+        return {
+            "ticker": row["ticker"],
+            "current_price": row["current_price"],
+            "return_1w": row["return_1w"],
+            "return_1m": row["return_1m"],
+            "return_ytd": row["return_ytd"],
+            "return_1yr": row["return_1yr"],
+        }
+
+    def get_price_performance_bulk(
+        self, tickers: list[str], max_age_hours: int = 12,
+    ) -> dict[str, dict]:
+        """Bulk lookup of cached price performance.
+
+        Returns {ticker: {current_price, return_1w, ...}} for fresh entries.
+        """
+        if not tickers:
+            return {}
+        placeholders = ",".join("?" * len(tickers))
+        rows = self._conn.execute(
+            f"SELECT * FROM price_performance WHERE ticker IN ({placeholders})",
+            tickers,
+        ).fetchall()
+
+        result: dict[str, dict] = {}
+        now = datetime.now()
+        for row in rows:
+            fetched = datetime.fromisoformat(row["fetched_at"])
+            age_hours = (now - fetched).total_seconds() / 3600
+            if age_hours > max_age_hours:
+                continue
+            result[row["ticker"]] = {
+                "ticker": row["ticker"],
+                "current_price": row["current_price"],
+                "return_1w": row["return_1w"],
+                "return_1m": row["return_1m"],
+                "return_ytd": row["return_ytd"],
+                "return_1yr": row["return_1yr"],
+            }
+        return result
+
+    def store_price_performance(
+        self,
+        ticker: str,
+        current_price: float | None,
+        return_1w: float | None,
+        return_1m: float | None,
+        return_ytd: float | None,
+        return_1yr: float | None,
+    ) -> None:
+        """Store price performance for a ticker."""
+        now = datetime.now().isoformat()
+        self._conn.execute(
+            """INSERT OR REPLACE INTO price_performance
+               (ticker, current_price, return_1w, return_1m,
+                return_ytd, return_1yr, fetched_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (ticker, current_price, return_1w, return_1m,
+             return_ytd, return_1yr, now),
         )
         self._conn.commit()
 
@@ -605,6 +795,98 @@ class HoldingsStore:
             }
             for r in rows
         }
+
+    def get_cross_quarter_activity(
+        self,
+        cik: str,
+        exclude_quarter: date | None = None,
+    ) -> list[dict]:
+        """Compute per-quarter-pair activity metrics for historical baseline.
+
+        For each consecutive quarter pair, computes:
+        - new_positions: CUSIPs in current quarter but not prior (equity only)
+        - exited_positions: CUSIPs in prior quarter but not current
+        - hhi_current / hhi_prior: sum-of-squared weights for each quarter
+        - max_new_weight_pct: weight of largest new position (% of AUM)
+
+        Returns list of dicts sorted by quarter_end DESC, excluding
+        the specified quarter if given.
+        """
+        # Get all quarters for this fund
+        quarters = self.get_available_quarters(cik)
+        if exclude_quarter and exclude_quarter in quarters:
+            quarters = [q for q in quarters if q != exclude_quarter]
+
+        if len(quarters) < 2:
+            return []
+
+        results: list[dict] = []
+
+        for i in range(len(quarters) - 1):
+            current_q = quarters[i]      # More recent
+            prior_q = quarters[i + 1]    # Older
+
+            # Load equity positions for both quarters
+            cur_rows = self._conn.execute(
+                """SELECT cusip, value_thousands
+                   FROM holdings
+                   WHERE cik = ? AND quarter_end = ? AND put_call IS NULL""",
+                (cik, current_q.isoformat()),
+            ).fetchall()
+
+            pri_rows = self._conn.execute(
+                """SELECT cusip, value_thousands
+                   FROM holdings
+                   WHERE cik = ? AND quarter_end = ? AND put_call IS NULL""",
+                (cik, prior_q.isoformat()),
+            ).fetchall()
+
+            cur_cusips = {r["cusip"] for r in cur_rows}
+            pri_cusips = {r["cusip"] for r in pri_rows}
+
+            new_cusips = cur_cusips - pri_cusips
+            exited_cusips = pri_cusips - cur_cusips
+
+            # AUM for current quarter
+            cur_total = sum(r["value_thousands"] for r in cur_rows)
+            pri_total = sum(r["value_thousands"] for r in pri_rows)
+
+            # HHI for both quarters
+            hhi_cur = 0.0
+            if cur_total > 0:
+                hhi_cur = sum(
+                    (r["value_thousands"] / cur_total) ** 2
+                    for r in cur_rows
+                )
+
+            hhi_pri = 0.0
+            if pri_total > 0:
+                hhi_pri = sum(
+                    (r["value_thousands"] / pri_total) ** 2
+                    for r in pri_rows
+                )
+
+            # Max new position weight
+            max_new_weight = 0.0
+            if new_cusips and cur_total > 0:
+                for r in cur_rows:
+                    if r["cusip"] in new_cusips:
+                        w = r["value_thousands"] / cur_total * 100
+                        if w > max_new_weight:
+                            max_new_weight = w
+
+            results.append({
+                "quarter_end": current_q,
+                "prior_quarter": prior_q,
+                "new_positions": len(new_cusips),
+                "exited_positions": len(exited_cusips),
+                "hhi_current": hhi_cur,
+                "hhi_prior": hhi_pri,
+                "hhi_change": hhi_cur - hhi_pri,
+                "max_new_weight_pct": max_new_weight,
+            })
+
+        return results
 
     def vacuum(self) -> None:
         """Reclaim disk space after large deletes."""

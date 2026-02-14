@@ -29,12 +29,9 @@ def render() -> None:
         "Signal Scanner</h2>",
         unsafe_allow_html=True,
     )
-    st.markdown(
-        "Surfaces the **highest-conviction position changes** across all tracked "
-        "funds — new initiations, full exits, and concentrated adds/trims — "
-        "ranked by signal strength (% share change), not just dollar size. "
-        "A fund doubling a small position is more informative than a mega-cap "
-        "adding 2% to an existing $5B stake."
+    st.caption(
+        "Highest-conviction moves across all funds — ranked by % share change, "
+        "not dollar size. Adds/trims filtered to ≥ 0.25% of AUM."
     )
 
     quarter = st.session_state.get("selected_quarter")
@@ -94,47 +91,29 @@ def render() -> None:
     ])
 
     with tab_new:
-        st.caption(
-            "Brand new positions initiated this quarter (not held last quarter). "
-            "Sorted by dollar value. Prefixed with [Fund Name]."
-        )
+        st.caption("New this quarter (not held prior). Sorted by $ value.")
         filtered = _apply_options_filter(all_new, options_filter)
         render_diff_table(filtered, title="New Positions Across All Funds")
 
     with tab_exit:
-        st.caption(
-            "Positions fully liquidated — held last quarter, zero this quarter. "
-            "Sorted by prior-quarter value."
-        )
+        st.caption("Fully liquidated — held last quarter, zero now. Sorted by prior value.")
         filtered = _apply_options_filter(all_exited, options_filter)
         render_diff_table(filtered, title="Exited Positions")
 
     with tab_add:
-        st.caption(
-            "Existing positions where the fund increased shares by 50%+. "
-            "Sorted by percentage share increase — a fund doubling a position "
-            "is a stronger signal than a small add to a large holding."
-        )
+        st.caption("Shares increased 50%+ and position ≥ 0.25% AUM. Sorted by % increase.")
         sig_adds = [a for a in all_added if a.is_significant_add]
         filtered = _apply_options_filter(sig_adds, options_filter)
         render_diff_table(filtered, title="Significant Adds (50%+ Share Increase)")
 
     with tab_trim:
-        st.caption(
-            "Existing positions where the fund cut shares by 60%+. "
-            "Near-total liquidations that didn't quite reach zero — "
-            "often the fund winding down a position over 2 quarters."
-        )
+        st.caption("Shares cut 60%+ (prior ≥ 0.25% AUM). Near-total liquidations.")
         sig_trims = [t for t in all_trimmed if t.is_significant_trim]
         filtered = _apply_options_filter(sig_trims, options_filter)
         render_diff_table(filtered, title="Significant Trims (60%+ Share Decrease)")
 
     with tab_weight:
-        st.caption(
-            "All position changes ranked by absolute portfolio weight change "
-            "(percentage points of AUM). Shows which moves had the biggest "
-            "impact on portfolio construction, regardless of direction."
-        )
+        st.caption("Ranked by absolute weight change (pp of AUM) — biggest portfolio impact.")
         # All changes sorted by absolute weight change
         all_changes = all_new + all_exited + all_added + all_trimmed
         all_changes.sort(key=lambda d: abs(d.weight_change_pct), reverse=True)

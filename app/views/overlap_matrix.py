@@ -1,17 +1,23 @@
 """Portfolio Overlap Matrix — heatmap of fund-to-fund similarity.
 
-Uses Jaccard similarity on CUSIP sets to measure overlap between
-any two funds' portfolios. Includes Sankey view of shared holdings.
+Supports two similarity measures:
+- **Jaccard** (name-count): what % of their combined stock universe do two funds share?
+- **Cosine** (value-weighted): how correlated are their portfolio weight vectors?
+  Two funds with the same top 10 at similar weights score high even if the rest differs.
+
+Includes Sankey view of shared holdings and crowding risk flags.
 """
 
 from __future__ import annotations
+
+import math
 
 import pandas as pd
 import streamlit as st
 
 from app.components.charts import overlap_heatmap, shared_holdings_sankey
 from core.aggregator import compute_most_widely_held
-from core.models import Tier
+from core.models import Holding, Tier
 
 
 def _compute_jaccard(
@@ -41,6 +47,61 @@ def _compute_jaccard(
                 union = set_i | set_j
                 if union:
                     matrix[i][j] = len(set_i & set_j) / len(union)
+                else:
+                    matrix[i][j] = 0.0
+
+    return names, matrix, fund_cusips
+
+
+def _compute_cosine(
+    funds_with_data, all_holdings,
+) -> tuple[list[str], list[list[float]], dict[str, set[str]]]:
+    """Compute cosine similarity on portfolio weight vectors.
+
+    Each fund's portfolio is a vector of position weights (value / total AUM).
+    The union of all CUSIPs forms the dimensions. Cosine similarity measures
+    how aligned two funds' bets are, weighting large positions more heavily.
+
+    Returns (names, matrix, fund_cusips_dict).
+    """
+    # Build weight vectors per fund
+    fund_weights: dict[str, dict[str, float]] = {}
+    fund_cusips: dict[str, set[str]] = {}
+
+    for fund in funds_with_data:
+        holdings: list[Holding] = all_holdings.get(fund.cik, [])
+        equity = [h for h in holdings if not h.is_option]
+        total = sum(h.value_thousands for h in equity)
+        if total == 0:
+            fund_weights[fund.cik] = {}
+            fund_cusips[fund.cik] = set()
+            continue
+
+        weights = {h.cusip: h.value_thousands / total for h in equity}
+        fund_weights[fund.cik] = weights
+        fund_cusips[fund.cik] = set(weights.keys())
+
+    names = [f.name for f in funds_with_data]
+    n = len(funds_with_data)
+    matrix = [[0.0] * n for _ in range(n)]
+
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                matrix[i][j] = 1.0
+            else:
+                wi = fund_weights[funds_with_data[i].cik]
+                wj = fund_weights[funds_with_data[j].cik]
+                shared_cusips = set(wi.keys()) & set(wj.keys())
+                if not shared_cusips:
+                    matrix[i][j] = 0.0
+                    continue
+                # Dot product on shared dimensions
+                dot = sum(wi[c] * wj[c] for c in shared_cusips)
+                mag_i = math.sqrt(sum(v * v for v in wi.values()))
+                mag_j = math.sqrt(sum(v * v for v in wj.values()))
+                if mag_i > 0 and mag_j > 0:
+                    matrix[i][j] = dot / (mag_i * mag_j)
                 else:
                     matrix[i][j] = 0.0
 
@@ -87,16 +148,9 @@ def render() -> None:
         "Portfolio Overlap Matrix</h2>",
         unsafe_allow_html=True,
     )
-    st.markdown(
-        "Compares every pair of fund portfolios to find **which funds "
-        "are holding the same stocks**. Overlap is measured as a "
-        "percentage: if Fund A holds 100 stocks and Fund B holds 80, "
-        "and 20 of those are the same, the overlap is "
-        "20 ÷ 160 unique stocks = **12.5%**. Higher overlap means "
-        "the funds are fishing in the same pond — useful for spotting "
-        "crowding risk or validating conviction when two independent "
-        "managers agree. Only equity positions are compared (options "
-        "excluded)."
+    st.caption(
+        "Which funds hold the same stocks? **Jaccard** = name overlap · "
+        "**Cosine** = value-weighted alignment. Equity only."
     )
 
     quarter = st.session_state.get("selected_quarter")
@@ -123,8 +177,25 @@ def render() -> None:
         st.warning("Need at least 2 funds with data for this quarter.")
         return
 
-    # Compute full Jaccard matrix
-    names, matrix, fund_cusips = _compute_jaccard(funds_with_data, all_holdings)
+    # Similarity mode selector
+    sim_mode = st.radio(
+        "Similarity Measure",
+        options=["Jaccard (Name-Count)", "Cosine (Value-Weighted)"],
+        horizontal=True,
+        index=0,
+        help=(
+            "Jaccard: % of their combined stock universe that both funds hold. "
+            "Cosine: how correlated their portfolio weight vectors are "
+            "(weights large positions more heavily)."
+        ),
+    )
+    use_cosine = "Cosine" in sim_mode
+
+    # Compute similarity matrix
+    if use_cosine:
+        names, matrix, fund_cusips = _compute_cosine(funds_with_data, all_holdings)
+    else:
+        names, matrix, fund_cusips = _compute_jaccard(funds_with_data, all_holdings)
     n = len(names)
 
     st.caption(f"Showing {n} funds with data for {quarter}")
@@ -140,15 +211,18 @@ def render() -> None:
 
     # --- Top Pairs (default) ---
     with tab_pairs:
-        st.markdown("### Most Overlapping Fund Pairs")
-        st.markdown(
-            "Every possible fund pair, ranked by portfolio overlap. "
-            "**Overlap** = the percentage of their combined stock "
-            "universe that both funds hold. **Stocks in Common** = "
-            "the actual count of stocks held by both. "
-            "**A Holdings / B Holdings** = total equity positions "
-            "in each fund's portfolio."
-        )
+        measure_label = "Cosine Similarity" if use_cosine else "Jaccard Overlap"
+        st.markdown(f"### Most Overlapping Fund Pairs ({measure_label})")
+        if use_cosine:
+            st.caption(
+                "Ranked by cosine similarity on weight vectors. "
+                "Higher = similar-sized bets on the same stocks → correlated drawdown risk."
+            )
+        else:
+            st.caption(
+                "All fund pairs ranked by Jaccard overlap. "
+                "Overlap = % of combined universe shared · Stocks in Common = raw count."
+            )
         pairs = []
         for i in range(n):
             for j in range(i + 1, n):
@@ -161,17 +235,17 @@ def render() -> None:
                 pairs.append({
                     "Fund A": names[i],
                     "Fund B": names[j],
-                    "Overlap": matrix[i][j],
+                    "Similarity": matrix[i][j],
                     "Stocks in Common": shared,
                     "A Holdings": total_a,
                     "B Holdings": total_b,
                 })
-        pairs.sort(key=lambda p: p["Overlap"], reverse=True)
+        pairs.sort(key=lambda p: p["Similarity"], reverse=True)
 
         # Format for display
         df_pairs = pd.DataFrame(pairs[:50])
         if not df_pairs.empty:
-            df_pairs["Overlap"] = df_pairs["Overlap"].apply(
+            df_pairs["Similarity"] = df_pairs["Similarity"].apply(
                 lambda x: f"{x:.1%}"
             )
             st.dataframe(
@@ -183,12 +257,12 @@ def render() -> None:
 
             # Quick insights
             top = pairs[0]
-            if top["Overlap"] > 0.15:
+            if top["Similarity"] > 0.15:
                 st.info(
-                    f"🔗 Highest overlap: **{top['Fund A']}** & "
-                    f"**{top['Fund B']}** hold "
-                    f"**{top['Stocks in Common']}** of the same "
-                    f"stocks ({top['Overlap']:.1%} overlap)."
+                    f"🔗 Highest similarity: **{top['Fund A']}** & "
+                    f"**{top['Fund B']}** — "
+                    f"**{top['Stocks in Common']}** shared stocks "
+                    f"({top['Similarity']:.1%} {measure_label.lower()})."
                 )
         else:
             st.info("No fund pairs to compare.")
@@ -197,10 +271,9 @@ def render() -> None:
     with tab_heatmap:
         # Controls for large fund counts
         if n > 15:
-            st.markdown(
-                f"*{n} funds available — use the slider to control "
-                f"how many appear on the heatmap. Funds are ranked by "
-                f"average overlap (most connected shown first).*"
+            st.caption(
+                f"{n} funds available — slider controls how many appear. "
+                f"Ranked by average similarity (most connected first)."
             )
             max_show = st.slider(
                 "Funds to display",
@@ -221,30 +294,41 @@ def render() -> None:
         else:
             h_names, h_matrix = names, matrix
 
-        fig = overlap_heatmap(h_matrix, h_names)
+        title_suffix = " (Cosine)" if use_cosine else " (Jaccard)"
+        fig = overlap_heatmap(h_matrix, h_names, title_suffix=title_suffix)
         st.plotly_chart(fig, use_container_width=True)
 
         with st.expander("How to Read the Matrix"):
-            st.markdown(
-                "The diagonal is masked (always 100%). Color intensity "
-                "reflects overlap between each pair of funds.\n\n"
-                "| Score | Meaning |\n"
-                "|-------|--------|\n"
-                "| **0–5%** | No meaningful overlap |\n"
-                "| **5–15%** | Low — a few shared large-caps |\n"
-                "| **15–30%** | Moderate — similar sector focus |\n"
-                "| **30%+** | High — correlated, crowding risk |"
-            )
+            if use_cosine:
+                st.markdown(
+                    "**Cosine similarity** measures how aligned two funds' "
+                    "portfolio weight vectors are. A score of 1.0 means "
+                    "identical portfolios; 0.0 means no overlap.\n\n"
+                    "| Score | Meaning |\n"
+                    "|-------|--------|\n"
+                    "| **0–5%** | No meaningful correlation |\n"
+                    "| **5–15%** | Low — a few shared bets |\n"
+                    "| **15–30%** | Moderate — correlated sector tilts |\n"
+                    "| **30%+** | High — correlated drawdown risk |"
+                )
+            else:
+                st.markdown(
+                    "The diagonal is masked (always 100%). Color intensity "
+                    "reflects overlap between each pair of funds.\n\n"
+                    "| Score | Meaning |\n"
+                    "|-------|--------|\n"
+                    "| **0–5%** | No meaningful overlap |\n"
+                    "| **5–15%** | Low — a few shared large-caps |\n"
+                    "| **15–30%** | Moderate — similar sector focus |\n"
+                    "| **30%+** | High — correlated, crowding risk |"
+                )
 
     # --- Sankey ---
     with tab_sankey:
-        st.markdown(
-            "The stocks on the **right** (orange) are the positions held by "
-            "the **most funds** simultaneously — these are the consensus "
-            "holdings across the tracked universe. Funds on the **left** "
-            "(blue) are connected to each stock they hold, with **flow "
-            "width proportional to portfolio weight** (% of AUM). "
-            "Thicker flows = larger positions. Hover for exact weights."
+        st.caption(
+            "Right (orange) = most widely held stocks · "
+            "Left (blue) = funds. Flow width = portfolio weight "
+            "(% of AUM). Thicker = larger position."
         )
         fund_lookup = {f.cik: f for f in funds_with_data}
         widely_held = compute_most_widely_held(

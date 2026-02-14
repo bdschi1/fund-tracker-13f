@@ -63,8 +63,9 @@ def _shorten_issuer(name: str) -> str:
     result = name.strip()
     for pat in _SUFFIXES:
         result = re.sub(pat, "", result, flags=re.IGNORECASE).strip()
-    # Collapse multiple spaces
+    # Collapse multiple spaces and strip trailing punctuation
     result = re.sub(r"\s{2,}", " ", result).strip()
+    result = result.rstrip(" .,;:-/")
     # If we stripped everything, fall back to original
     return result if result else name.strip()
 
@@ -285,18 +286,28 @@ class PositionDiff(BaseModel):
 
     @property
     def is_significant_add(self) -> bool:
-        """Position increased by 50%+ in shares."""
+        """Position increased by 50%+ in shares AND is ≥ 0.25% of AUM.
+
+        The weight gate filters out micro-positions: a $10B fund doubling
+        a $1M position (0.01% weight) is noise, not conviction.
+        """
         return (
             self.change_type == PositionChangeType.ADDED
             and self.shares_change_pct >= 0.50
+            and self.current_weight_pct >= 0.25
         )
 
     @property
     def is_significant_trim(self) -> bool:
-        """Position decreased by 60%+ in shares."""
+        """Position decreased by 60%+ in shares AND was ≥ 0.25% of AUM.
+
+        Requires the *prior* weight to be meaningful — cutting a tiny
+        position by 80% is not informative.
+        """
         return (
             self.change_type == PositionChangeType.TRIMMED
             and self.shares_change_pct <= -0.60
+            and self.prior_weight_pct >= 0.25
         )
 
     @property
@@ -384,6 +395,14 @@ class CrowdedTrade(BaseModel):
     funds_exited: list[str] = Field(default_factory=list)
     net_fund_sentiment: int = 0  # (initiated + added) - (trimmed + exited)
 
+    # Dollar-weighted metrics
+    aggregate_value_thousands: int = 0  # Total $ across all tracked funds
+    aggregate_shares: int = 0           # Total shares across all tracked funds
+
+    # Float ownership (populated when sector data available)
+    float_shares: int | None = None
+    float_ownership_pct: float | None = None  # % of float held by tracked funds
+
     @property
     def total_funds_buying(self) -> int:
         return len(self.funds_initiated) + len(self.funds_added)
@@ -395,6 +414,15 @@ class CrowdedTrade(BaseModel):
     @property
     def display_label(self) -> str:
         return self.ticker or _shorten_issuer(self.issuer_name)
+
+    @property
+    def aggregate_value_dollars(self) -> int:
+        return self.aggregate_value_thousands * 1000
+
+    @property
+    def is_crowding_risk(self) -> bool:
+        """True if tracked funds collectively own >5% of float."""
+        return self.float_ownership_pct is not None and self.float_ownership_pct >= 5.0
 
 
 class FundDivergence(BaseModel):
@@ -431,6 +459,47 @@ class ConvictionTrack(BaseModel):
         return self.quarters_held + (self.consecutive_adds * 1.5)
 
 
+class FundBaseline(BaseModel):
+    """Historical baseline stats for one fund, computed from past quarters.
+
+    Used by compute_top_findings() to penalize expected behavior
+    and boost genuinely surprising activity.
+    """
+
+    cik: str
+    quarters_available: int  # How many historical quarter-pairs this is based on
+
+    # Activity baseline (new + exits per quarter)
+    activity_mean: float
+    activity_std: float
+
+    # HHI change baseline (absolute magnitude per quarter)
+    hhi_change_mean: float
+    hhi_change_std: float
+
+    # New position sizing baseline (max new position weight % per quarter)
+    max_new_weight_mean: float
+    max_new_weight_std: float
+
+    def activity_zscore(self, current_activity: int) -> float:
+        """Z-score for this quarter's activity count."""
+        if self.activity_std == 0:
+            return 0.0
+        return (current_activity - self.activity_mean) / self.activity_std
+
+    def hhi_zscore(self, current_hhi_change: float) -> float:
+        """Z-score for this quarter's absolute HHI change."""
+        if self.hhi_change_std == 0:
+            return 0.0
+        return (abs(current_hhi_change) - self.hhi_change_mean) / self.hhi_change_std
+
+    def new_position_zscore(self, current_max_weight: float) -> float:
+        """Z-score for this quarter's largest new position weight."""
+        if self.max_new_weight_std == 0:
+            return 0.0
+        return (current_max_weight - self.max_new_weight_mean) / self.max_new_weight_std
+
+
 class CrossFundSignals(BaseModel):
     """Aggregated cross-fund signals for one quarter."""
 
@@ -439,5 +508,9 @@ class CrossFundSignals(BaseModel):
     divergences: list[FundDivergence]
     consensus_initiations: list[CrowdedTrade]
     sector_flows: dict[str, dict[str, int]] = Field(default_factory=dict)
+    # Dollar-weighted sector flows: {sector: {"buying_k": int, "selling_k": int, "net_k": int}}
+    sector_dollar_flows: dict[str, dict[str, int]] = Field(default_factory=dict)
+    # Crowding risk flags (stocks with >5% float owned by tracked funds)
+    crowding_risks: list[CrowdedTrade] = Field(default_factory=list)
     funds_analyzed: int
     generated_at: datetime = Field(default_factory=datetime.now)

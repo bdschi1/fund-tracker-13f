@@ -11,6 +11,7 @@ from datetime import date, datetime
 from core.aggregator import compute_top_findings
 from core.models import (
     CrossFundSignals,
+    FundBaseline,
     FundDiff,
 )
 
@@ -21,6 +22,7 @@ def generate_quarterly_report(
     quarter: date,
     include_fund_details: bool = True,
     max_positions_per_section: int = 15,
+    baselines: dict[str, FundBaseline] | None = None,
 ) -> str:
     """Generate a full markdown report for one quarter.
 
@@ -63,7 +65,9 @@ def generate_quarterly_report(
         "exit": "🚪",
         "activity": "⚡",
     }
-    findings = compute_top_findings(fund_diffs, signals, n=5)
+    findings = compute_top_findings(
+        fund_diffs, signals, n=5, baselines=baselines,
+    )
     if findings:
         lines.append("### 🔍 Top Findings")
         lines.append("")
@@ -130,6 +134,28 @@ def generate_quarterly_report(
             lines.append(f"| **{stock}** | {init} | {exit_} | {div.sector or '—'} |")
         lines.append("")
 
+    # Crowding Risk
+    if signals.crowding_risks:
+        lines.append("---")
+        lines.append("")
+        lines.append("## 🚨 Crowding Risk (Float Ownership)")
+        lines.append("")
+        lines.append(
+            "Stocks where tracked funds collectively own ≥ 5% of the public float. "
+            "High float ownership creates liquidation risk."
+        )
+        lines.append("")
+        lines.append("| Stock | Float % | Agg. Value | Sector |")
+        lines.append("|-------|---------|-----------|--------|")
+        for ct in signals.crowding_risks[:max_positions_per_section]:
+            stock = ct.display_label
+            fp = f"{ct.float_ownership_pct:.1f}%" if ct.float_ownership_pct else "—"
+            val = _fmt_value(ct.aggregate_value_thousands)
+            lines.append(
+                f"| **{stock}** | {fp} | {val} | {ct.sector or '—'} |"
+            )
+        lines.append("")
+
     # Sector Flows
     if signals.sector_flows:
         lines.append("---")
@@ -151,6 +177,29 @@ def generate_quarterly_report(
             lines.append(
                 f"| {sector} | {counts['buying']} | {counts['selling']} | "
                 f"{arrow} {net:+d} |"
+            )
+        lines.append("")
+
+    # Dollar-weighted sector flows
+    if signals.sector_dollar_flows:
+        lines.append("### Dollar-Weighted Sector Flows")
+        lines.append("")
+        lines.append("| Sector | Buying | Selling | Net Flow |")
+        lines.append("|--------|--------|---------|----------|")
+        sorted_dollar = sorted(
+            signals.sector_dollar_flows.items(),
+            key=lambda x: abs(x[1]["net_k"]),
+            reverse=True,
+        )
+        for sector, counts in sorted_dollar:
+            if sector == "Unknown":
+                continue
+            net = counts["net_k"]
+            arrow = "🟢" if net > 0 else "🔴" if net < 0 else "⚪"
+            lines.append(
+                f"| {sector} | {_fmt_value(counts['buying_k'])} | "
+                f"{_fmt_value(counts['selling_k'])} | "
+                f"{arrow} {_fmt_value(net)} |"
             )
         lines.append("")
 

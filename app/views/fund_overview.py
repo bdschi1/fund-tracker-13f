@@ -72,53 +72,35 @@ def _render_fund_diff(diff: FundDiff, quarter: date) -> None:
     ])
 
     with tab_new:
-        st.caption(
-            "Positions this fund opened for the first time this "
-            "quarter. Sorted by dollar value — larger initiations "
-            "signal higher conviction."
-        )
+        st.caption("First-time positions this quarter. Sorted by $ value.")
         render_diff_table(
             diff.new_positions, title="New Positions",
         )
 
     with tab_exit:
-        st.caption(
-            "Positions fully sold to zero. Sorted by prior-quarter "
-            "value — larger exits may signal a thesis change or "
-            "profit-taking."
-        )
+        st.caption("Fully sold to zero. Sorted by prior value.")
         render_diff_table(
             diff.exited_positions, title="Exited Positions",
         )
 
     with tab_add:
-        st.caption(
-            "Existing positions where shares were increased. "
-            "Sorted by percentage increase — a 2x is a stronger "
-            "conviction signal than a 10% top-up."
-        )
+        st.caption("Shares increased. Sorted by % change — a 2× beats a 10% top-up.")
         render_diff_table(
             diff.added_positions,
             title="Added Positions (by % increase)",
         )
 
     with tab_trim:
-        st.caption(
-            "Existing positions where shares were reduced. "
-            "Sorted by percentage decrease — near-total cuts "
-            "signal loss of conviction."
-        )
+        st.caption("Shares reduced. Sorted by % decrease — near-total cuts signal lost conviction.")
         render_diff_table(
             diff.trimmed_positions,
             title="Trimmed Positions (by % decrease)",
         )
 
     with tab_shape:
-        st.markdown(
-            "Position weight distribution shows whether the "
-            "portfolio is **concentrated** (a few big bets) or "
-            "**diversified** (many small positions). Prior quarter "
-            "overlay (gray) shows how the posture shifted."
+        st.caption(
+            "Weight distribution: concentrated (few big bets) vs. diversified. "
+            "Gray overlay = prior quarter."
         )
         store = st.session_state.get("store")
         if store:
@@ -140,11 +122,7 @@ def _render_fund_diff(diff: FundDiff, quarter: date) -> None:
             st.plotly_chart(fig, use_container_width=True)
 
     with tab_all:
-        st.caption(
-            "Complete 13F holdings as reported to the SEC. "
-            "Includes equity and options positions with portfolio "
-            "weights. This is the raw filing data."
-        )
+        st.caption("Raw 13F filing data — all equity and options positions with weights.")
         store = st.session_state.get("store")
         if store:
             holdings = store.get_holdings(diff.fund.cik, quarter)
@@ -313,11 +291,7 @@ def render() -> None:
         "Fund Deep Dive</h2>",
         unsafe_allow_html=True,
     )
-    st.markdown(
-        "Quarter-over-quarter analysis of a single fund's 13F "
-        "holdings. Select a fund from the sidebar, or look up "
-        "any 13F filer by CIK below."
-    )
+    st.caption("QoQ analysis of a single fund. Select from sidebar or look up any CIK.")
 
     quarter = st.session_state.get("selected_quarter")
     fund_diffs: dict[date, list[FundDiff]] = st.session_state.get(

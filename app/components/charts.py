@@ -77,6 +77,7 @@ def sector_flows_chart(sector_flows: dict[str, dict[str, int]]) -> go.Figure:
 def overlap_heatmap(
     overlap_matrix: list[list[float]],
     fund_names: list[str],
+    title_suffix: str = "",
 ) -> go.Figure:
     """Plotly heatmap of portfolio overlap between fund pairs.
 
@@ -142,7 +143,7 @@ def overlap_heatmap(
     size = max(550, n * cell_px + 160)
     tick_size = 11 if n <= 15 else 10 if n <= 25 else 9
     fig.update_layout(
-        title="Portfolio Overlap — % of Stocks in Common",
+        title=f"Portfolio Similarity{title_suffix}",
         height=size,
         width=size + 60,
         xaxis=dict(

@@ -45,7 +45,7 @@ from app.views import (  # noqa: E402
     stock_analysis,
 )
 from config.settings import settings  # noqa: E402
-from core.aggregator import aggregate_signals, tag_themes  # noqa: E402
+from core.aggregator import aggregate_signals, compute_fund_baselines, tag_themes  # noqa: E402
 from core.diff_engine import compute_fund_diff  # noqa: E402
 from core.models import CrossFundSignals, FundDiff, FundHoldings, FundInfo  # noqa: E402
 from core.report import generate_quarterly_report  # noqa: E402
@@ -53,6 +53,7 @@ from data.cache import DataCache  # noqa: E402
 from data.cusip_resolver import resolve_cusips  # noqa: E402
 from data.edgar_client import EdgarClient  # noqa: E402
 from data.filing_parser import parse_info_table_xml  # noqa: E402
+from data.sector_provider import enrich_sectors  # noqa: E402
 from data.store import HoldingsStore  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -164,6 +165,26 @@ def resolve_all_cusips(quarter: date) -> int:
     return len(resolved)
 
 
+def _enrich_quarter_sectors(quarter: date) -> int:
+    """Enrich tickers for a quarter with sector/industry/float data from yfinance.
+
+    Returns count of tickers enriched.
+    """
+    store: HoldingsStore = st.session_state.store
+    cache: DataCache = st.session_state.cache
+
+    # Get unique tickers for this quarter
+    cusips = store.get_unique_cusips_for_quarter(quarter)
+    ticker_map = cache.get_cusip_tickers(cusips)
+    tickers = list(set(ticker_map.values()))
+
+    if not tickers:
+        return 0
+
+    enriched = enrich_sectors(tickers, cache)
+    return len([t for t in enriched.values() if t.get("sector")])
+
+
 def run_analysis(quarter: date) -> tuple[list[FundDiff], CrossFundSignals]:
     """Run the full analysis pipeline for a quarter.
 
@@ -181,6 +202,10 @@ def run_analysis(quarter: date) -> tuple[list[FundDiff], CrossFundSignals]:
     # Get CUSIP→ticker mapping for enrichment
     cusips = store.get_unique_cusips_for_quarter(quarter)
     ticker_map = cache.get_cusip_tickers(cusips)
+
+    # Get sector/float data from cache (populated by _enrich_quarter_sectors)
+    tickers = list(set(ticker_map.values()))
+    sector_map = cache.get_sector_info_bulk(tickers) if tickers else {}
 
     fund_diffs: list[FundDiff] = []
     skipped: list[dict] = []  # Track which funds were excluded
@@ -215,10 +240,14 @@ def run_analysis(quarter: date) -> tuple[list[FundDiff], CrossFundSignals]:
             })
             continue
 
-        # Enrich with tickers
+        # Enrich with tickers + sectors
         for h in current_holdings + prior_holdings:
             if h.cusip in ticker_map:
                 h.ticker = ticker_map[h.cusip]
+                info = sector_map.get(h.ticker)
+                if info:
+                    h.sector = info.get("sector")
+                    h.industry = info.get("industry")
 
         # Build FundHoldings objects
         filing_date = store.get_filing_date(fund.cik, quarter) or quarter
@@ -249,13 +278,25 @@ def run_analysis(quarter: date) -> tuple[list[FundDiff], CrossFundSignals]:
     # Store skip info so the UI can report it
     st.session_state["skipped_funds"] = skipped
 
-    # Cross-fund aggregation
+    # Cross-fund aggregation (with dollar-weighted + float metrics)
     signals = aggregate_signals(
         fund_diffs=fund_diffs,
         quarter=quarter,
         min_funds_for_crowd=settings.min_funds_for_crowd,
         min_funds_for_consensus=settings.min_funds_for_consensus,
+        sector_data=sector_map,
     )
+
+    # Store sector/float data for use by views
+    st.session_state.setdefault("sector_data", {})[quarter] = sector_map
+
+    # Historical baselines for findings scoring
+    baselines = compute_fund_baselines(
+        store=store,
+        fund_ciks=[d.fund.cik for d in fund_diffs],
+        current_quarter=quarter,
+    )
+    st.session_state.setdefault("fund_baselines", {})[quarter] = baselines
 
     return fund_diffs, signals
 
@@ -265,25 +306,46 @@ def _run_full_pipeline(n_quarters: int) -> None:
 
     Called by the single "Run Full Analysis" button.
     """
+    # Top-level progress bar visible outside the status expander
+    pipeline_bar = st.progress(0, text="Starting pipeline…")
+
     status = st.status(
         "Running full analysis pipeline…", expanded=True,
     )
 
     # Step 1 — Fetch
+    n_funds = len(st.session_state.watchlist)
     with status:
         st.write("**① Fetching filings from EDGAR…**")
-        progress = st.progress(0)
+        # Wrap progress to drive both the detail bar and the pipeline bar
+        detail_progress = st.progress(0)
+
+        def _dual_progress(frac: float, text: str = "") -> None:
+            detail_progress.progress(frac, text=text)
+            # Step 1 spans 0–60% of overall pipeline
+            pipeline_bar.progress(
+                frac * 0.60,
+                text=f"① Fetching ({int(frac * n_funds)}/{n_funds})…",
+            )
+
+        # Use a thin wrapper so fetch_filings can call .progress()
+        class _DualBar:
+            @staticmethod
+            def progress(frac: float, text: str = "") -> None:
+                _dual_progress(frac, text)
+
         fetch_count = fetch_filings(
             funds=st.session_state.watchlist,
             n_quarters=n_quarters,
-            progress_bar=progress,
+            progress_bar=_DualBar,
         )
-        progress.empty()
+        detail_progress.empty()
         st.write(f"✓ {fetch_count} new filings processed")
 
     # Refresh quarters after fetch
     quarters = get_available_quarters()
     if not quarters:
+        pipeline_bar.empty()
         with status:
             st.error("No filings found. Check fund CIKs.")
             status.update(
@@ -296,6 +358,7 @@ def _run_full_pipeline(n_quarters: int) -> None:
     st.session_state["selected_quarter"] = quarter
 
     # Step 2 — Resolve CUSIPs
+    pipeline_bar.progress(0.65, text="② Resolving CUSIPs…")
     with status:
         st.write(
             f"**② Resolving CUSIPs for {quarter}…**"
@@ -303,9 +366,17 @@ def _run_full_pipeline(n_quarters: int) -> None:
         cusip_count = resolve_all_cusips(quarter)
         st.write(f"✓ {cusip_count} CUSIPs resolved")
 
-    # Step 3 — Analyze
+    # Step 3 — Enrich sectors (yfinance)
+    pipeline_bar.progress(0.75, text="③ Enriching sectors & float…")
     with status:
-        st.write("**③ Running analysis engine…**")
+        st.write("**③ Enriching sectors & float data…**")
+        sector_count = _enrich_quarter_sectors(quarter)
+        st.write(f"✓ {sector_count} tickers enriched")
+
+    # Step 4 — Analyze
+    pipeline_bar.progress(0.90, text="④ Analyzing…")
+    with status:
+        st.write("**④ Running analysis engine…**")
         diffs, signals = run_analysis(quarter)
         st.session_state.fund_diffs[quarter] = diffs
         st.session_state.cross_signals[quarter] = signals
@@ -339,6 +410,7 @@ def _run_full_pipeline(n_quarters: int) -> None:
                     f"no filing for {quarter}"
                 )
 
+    pipeline_bar.progress(1.0, text="✅ Pipeline complete")
     status.update(
         label=(
             f"Analysis complete — {len(diffs)} funds "
@@ -359,7 +431,7 @@ def render_sidebar() -> str:
     """Render sidebar controls. Returns selected page name."""
     with st.sidebar:
         st.title("📊 Fund Tracker 13F")
-        st.caption("Hedge Fund 13F Filing Analyzer")
+        st.caption("13F Filing Analyzer — Hedge Funds & Asset Managers")
 
         # --- Quarter picker & Analyze (above navigation) ---
         quarters = get_available_quarters()
@@ -373,28 +445,32 @@ def render_sidebar() -> str:
         with st.expander("Fund Tiers", expanded=False):
             render_tier_filter()
 
-        if has_data:
-            # Analyze button if quarter not yet analyzed
-            if q and q not in st.session_state.get("fund_diffs", {}):
-                if st.button(
-                    "▶ Analyze",
-                    use_container_width=True,
-                    type="primary",
-                    help="Compare this quarter to the prior quarter",
-                ):
-                    with st.spinner("Analyzing..."):
-                        diffs, signals = run_analysis(q)
-                        st.session_state.fund_diffs[q] = diffs
-                        st.session_state.cross_signals[q] = signals
-                        _export_report(q, diffs, signals)
-                    st.rerun()
+        if has_data and q:
+            already_analyzed = q in st.session_state.get("fund_diffs", {})
+
+            # Always show Analyze — primary if not yet run, secondary for re-run
+            btn_label = "▶ Analyze" if not already_analyzed else "🔄 Re-Analyze"
+            btn_type = "primary" if not already_analyzed else "secondary"
+            if st.button(
+                btn_label,
+                use_container_width=True,
+                type=btn_type,
+                help="Compare this quarter to the prior quarter",
+            ):
+                with st.spinner("Resolving CUSIPs & enriching…"):
+                    resolve_all_cusips(q)
+                    _enrich_quarter_sectors(q)
+                with st.spinner("Analyzing..."):
+                    diffs, signals = run_analysis(q)
+                    st.session_state.fund_diffs[q] = diffs
+                    st.session_state.cross_signals[q] = signals
+                    _export_report(q, diffs, signals)
+                st.rerun()
 
             # Status line
-            if q and q in st.session_state.get("fund_diffs", {}):
+            if already_analyzed:
                 n_funds = len(st.session_state.fund_diffs[q])
                 st.caption(f"✅ {n_funds} funds analyzed")
-            elif q:
-                st.caption("Select ▶ Analyze above")
 
         # Fetch/refresh button
         if st.button(
@@ -407,7 +483,7 @@ def render_sidebar() -> str:
                 "quarterly filings become available."
             ),
         ):
-            _run_full_pipeline(n_quarters=2)
+            _run_full_pipeline(n_quarters=8)
 
         st.divider()
 
@@ -490,13 +566,11 @@ def _render_onboarding() -> None:
 
     with col_welcome:
         st.markdown("## Welcome to Fund Tracker 13F")
-        st.markdown(
-            f"Analyzes **SEC 13F-HR filings** from "
-            f"**{n_funds} hedge funds** to surface high-conviction "
-            f"moves — new positions, full exits, concentrated adds, "
-            f"and consensus trades. Ranked by *signal strength* "
-            f"(% share change), not dollar size: a fund doubling "
-            f"a position ranks higher than a 2% top-up."
+        st.caption(
+            f"Analyzes SEC 13F-HR filings from {n_funds} hedge funds & "
+            f"asset managers. Surfaces high-conviction moves — new positions, "
+            f"exits, concentrated adds, consensus trades. Ranked by signal "
+            f"strength (% share change), not dollar size."
         )
 
     with col_deadlines:
@@ -515,55 +589,35 @@ def _render_onboarding() -> None:
 
     if not quarters:
         # No data at all — first-time instructions
-        st.markdown(
-            "**First time?** Click **▶ Fetch & Analyze** in the "
-            "sidebar. This downloads filings from SEC EDGAR, "
-            "resolves CUSIPs to tickers, and runs the full "
-            "analysis (1–3 min). Data is stored locally in "
-            "SQLite — only downloaded once."
+        st.info(
+            "**First time?** Click **▶ Fetch & Analyze** in the sidebar. "
+            "Downloads filings from EDGAR, resolves CUSIPs, and runs the full analysis (1–3 min). "
+            "Data cached locally in SQLite."
         )
     else:
         # Has data but hasn't analyzed yet
-        st.markdown(
-            f"**{len(quarters)} quarter(s)** of filing data are "
-            f"stored locally. Select a quarter in the sidebar "
-            f"and click **▶ Analyze**. To re-download the latest "
-            f"filings from EDGAR, click **🔄 Refresh from EDGAR**."
+        st.info(
+            f"**{len(quarters)} quarter(s)** cached locally. "
+            f"Click **🔄 Refresh from EDGAR** to pull the latest filings, "
+            f"then **▶ Analyze** to run the comparison."
         )
 
+    st.markdown("Once the analysis runs, explore the pages:")
     st.markdown(
-        "Once the analysis runs, explore the pages — "
-        "numbered to match the sidebar:"
-    )
-    st.markdown(
-        f"{_n.format(1)} **Start at the Dashboard** — "
-        "review the top findings, fund summary table, top "
-        "position moves, activity heatmap, and concentration "
-        "shifts for a quick overview of the quarter.\n\n"
-        f"{_n.format(2)} **Search a stock** on Stock Analysis — "
-        "type any ticker (e.g. **AAPL**, **NVDA**) to see which "
-        "funds hold it, who initiated or exited, share changes, "
-        "and a net bullish/bearish signal.\n\n"
-        f"{_n.format(3)} **Drill into a fund** on Fund Deep "
-        "Dive — select a watchlist fund in the sidebar, or enter "
-        "any CIK to analyze a fund not on the watchlist. Shows "
-        "AUM, concentration, filing lag, and every position "
-        "change.\n\n"
-        f"{_n.format(4)} **Scan all signals** on Signal Scanner "
-        "— browse every position change across all funds: new "
-        "positions, exits, significant adds (50%+), significant "
-        "trims (60%+). Filter by equity vs. options.\n\n"
-        f"{_n.format(5)} **Find consensus moves** on Crowded "
-        "Trades — see which stocks 3+ funds are buying or "
-        "selling at the same time, plus divergences (one fund "
-        "buying what another is selling).\n\n"
-        f"{_n.format(6)} **Compare portfolios** on Overlap "
-        "Matrix — view a fund-to-fund similarity heatmap, "
-        "sortable overlap table, and Sankey diagram of shared "
-        "holdings.\n\n"
-        f"{_n.format(7)} **Export a report** — download a "
-        "complete Markdown summary of all signals and fund "
-        "breakdowns. Preview in-browser first.",
+        f"{_n.format(1)} **Dashboard** — top findings, fund summary, "
+        "activity heatmap, concentration shifts<br>"
+        f"{_n.format(2)} **Stock Analysis** — search any ticker to see "
+        "which funds hold it and net sentiment<br>"
+        f"{_n.format(3)} **Fund Deep Dive** — single-fund breakdown "
+        "(AUM, position changes, filing lag) or ad-hoc CIK lookup<br>"
+        f"{_n.format(4)} **Signal Scanner** — every new position, exit, "
+        "significant add/trim across all funds<br>"
+        f"{_n.format(5)} **Crowded Trades** — consensus buys/sells "
+        "(3+ funds) and divergences<br>"
+        f"{_n.format(6)} **Overlap Matrix** — fund-to-fund portfolio "
+        "similarity heatmap and shared-holdings Sankey<br>"
+        f"{_n.format(7)} **Export Report** — download a Markdown "
+        "summary of all signals and fund breakdowns",
         unsafe_allow_html=True,
     )
 
@@ -574,15 +628,115 @@ def _render_onboarding() -> None:
             "institutional investment managers with 100M+ in U.S. "
             "equities. Due 45 days after quarter end.\n\n"
             "**Conviction sizing** — Moves ranked by *percentage "
-            "change in shares*, not dollar value. A fund doubling "
-            "a position signals more conviction than a 2% top-up.\n\n"
+            "change in shares*, not dollar value. Adds and trims "
+            "must also be ≥ 0.25% of AUM to filter out noise from "
+            "micro-positions.\n\n"
             "**Filing lag** — Days between quarter end and filing "
             "date. Closer to 45 days = more stale. Most top-tier "
             "funds file within 30 days.\n\n"
             "**HHI (Herfindahl Index)** — Measures portfolio "
             "concentration. Positive change = concentrating into "
-            "fewer names. Negative = diversifying."
+            "fewer names. Negative = diversifying.\n\n"
+            "**Cosine similarity** — Value-weighted portfolio "
+            "overlap. Two funds with the same top holdings at "
+            "similar weights score high, even if they share few "
+            "small positions. A better measure of correlated "
+            "drawdown risk than simple name-count overlap.\n\n"
+            "**Float ownership %** — Total shares held by tracked "
+            "funds as a percentage of the stock's public float. "
+            "Above 5% signals crowding risk — if multiple funds "
+            "exit at once, price impact cascades.\n\n"
+            "**Dollar-weighted flows** — Aggregate dollar value "
+            "flowing into or out of a sector or stock across all "
+            "tracked funds, not just a count of funds buying vs. "
+            "selling."
         )
+
+    # --- Disclaimer ---
+    with st.expander("⚠️ Disclaimer", expanded=False):
+        st.markdown(
+            "This tool is provided **for informational and educational "
+            "purposes only**. It is not investment advice, and nothing "
+            "displayed here constitutes a recommendation to buy, sell, "
+            "or hold any security.\n\n"
+            "13F filings are **backward-looking** — they reflect "
+            "positions as of a quarter-end date and are filed up to "
+            "45 days later. Fund managers may have materially changed "
+            "their holdings between the reporting date and now.\n\n"
+            "Data is sourced from SEC EDGAR and yfinance. While "
+            "reasonable efforts are made to ensure accuracy, there may "
+            "be errors, omissions, or delays. Derived metrics "
+            "(conviction scores, crowding risk, sector flows) are "
+            "heuristic estimates, not audited figures.\n\n"
+            "**Do not rely on this tool for investment decisions.** "
+            "Always consult a qualified financial advisor and do your "
+            "own due diligence before investing."
+        )
+
+    # --- Topic badges ---
+    st.markdown(
+        "<div style='margin-top:16px; display:flex; flex-wrap:wrap; "
+        "gap:6px; justify-content:center;'>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1f3044; color:#58a6ff;'>13f-filings</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1f3044; color:#58a6ff;'>hedge-funds</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1f3044; color:#58a6ff;'>sec-edgar</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1f3044; color:#58a6ff;'>portfolio-analysis</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1f3044; color:#58a6ff;'>institutional-investors</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1f3044; color:#58a6ff;'>streamlit</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1f3044; color:#58a6ff;'>python</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1f3044; color:#58a6ff;'>crowded-trades</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1f3044; color:#58a6ff;'>conviction-analysis</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1f3044; color:#58a6ff;'>float-ownership</span>"
+        "</div>"
+        "<div style='margin-top:6px; display:flex; flex-wrap:wrap; "
+        "gap:6px; justify-content:center;'>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1a2f1a; color:#7ee787;'>sqlite</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1a2f1a; color:#7ee787;'>plotly</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1a2f1a; color:#7ee787;'>pydantic</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1a2f1a; color:#7ee787;'>yfinance</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1a2f1a; color:#7ee787;'>pandas</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1a2f1a; color:#7ee787;'>rest-api</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1a2f1a; color:#7ee787;'>data-pipeline</span>"
+        "<span style='display:inline-block; padding:4px 12px; "
+        "border-radius:24px; font-size:0.72rem; font-weight:500; "
+        "background:#1a2f1a; color:#7ee787;'>caching</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_filing_deadlines() -> None:
@@ -692,10 +846,14 @@ def _export_report(
         q_num = (quarter.month - 1) // 3 + 1
         filename = f"13f_report_Q{q_num}_{quarter.year}.md"
         path = _EXPORT_DIR / filename
+        baselines = st.session_state.get(
+            "fund_baselines", {},
+        ).get(quarter)
         report_md = generate_quarterly_report(
             fund_diffs=diffs,
             signals=signals,
             quarter=quarter,
+            baselines=baselines,
         )
         path.write_text(report_md, encoding="utf-8")
         logger.info("Exported report to %s", path)

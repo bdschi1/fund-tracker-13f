@@ -16,7 +16,8 @@ from app.components.charts import (
     top_moves_chart,
 )
 from core.aggregator import compute_top_findings
-from core.models import CrossFundSignals, FundDiff
+from core.models import CrossFundSignals, FundBaseline, FundDiff
+from data.performance_provider import fetch_price_performance, format_price_tag
 
 
 def _fmt_aum(thousands: int) -> str:
@@ -44,20 +45,75 @@ def _esc(text: str) -> str:
     return text.replace("$", r"\$")
 
 
+def _get_findings_prices(findings: list[dict]) -> dict[str, dict]:
+    """Fetch price performance for tickers in findings (cached, ~5 calls max)."""
+    cache = st.session_state.get("cache")
+    if not cache:
+        return {}
+
+    tickers = [
+        f["ticker"] for f in findings
+        if f.get("ticker") is not None
+    ]
+    if not tickers:
+        return {}
+
+    # Deduplicate
+    tickers = list(dict.fromkeys(tickers))
+
+    try:
+        return fetch_price_performance(tickers, cache)
+    except Exception:
+        return {}
+
+
 def _render_findings(
-    diffs: list[FundDiff], signals: CrossFundSignals | None,
+    diffs: list[FundDiff],
+    signals: CrossFundSignals | None,
+    baselines: dict[str, FundBaseline] | None = None,
 ) -> None:
     """Render the Top 5 Findings box at the top of the Dashboard."""
-    findings = compute_top_findings(diffs, signals, n=5)
+    findings = compute_top_findings(
+        diffs, signals, n=5, baselines=baselines,
+    )
     if not findings:
         return
+
+    # Fetch price performance for tickers mentioned in findings
+    price_perf = _get_findings_prices(findings)
 
     st.markdown("### 🔍 Top Findings")
     for f in findings:
         icon = _FINDING_ICONS.get(f["category"], "•")
         headline = _esc(f["headline"])
         detail = _esc(f["detail"])
-        st.markdown(f"{icon} **{headline}** — {detail}")
+
+        # Add price tag if available
+        ticker = f.get("ticker")
+        price_tag = ""
+        if ticker and ticker in price_perf:
+            tag = format_price_tag(price_perf[ticker])
+            price_tag = f"  \n&emsp;📈 *{_esc(tag)}*"
+
+        st.markdown(f"{icon} **{headline}** — {detail}{price_tag}")
+
+    with st.expander("ℹ️ How findings are ranked"):
+        n_baselined = len(baselines) if baselines else 0
+        st.markdown(
+            "Ranked by **surprise value** — each fund's activity is "
+            "compared against its own historical baseline.\n\n"
+            "| Signal type | Scoring method |\n"
+            "|---|---|\n"
+            "| Cross-fund (consensus, crowded, divergences) | Fund count |\n"
+            "| Per-fund (activity, new positions, concentration) "
+            "| Z-score vs. fund history |\n\n"
+            "**Z-score multipliers:** "
+            "normal range → 0.5× · above normal → 1.0× · "
+            "very unusual (2σ+) → 1.6×\n\n"
+            f"**{n_baselined}** of {len(diffs)} funds have enough "
+            "history (3+ quarters) for baseline scoring."
+        )
+
     st.divider()
 
 
@@ -129,10 +185,8 @@ def render() -> None:
         "Dashboard</h2>",
         unsafe_allow_html=True,
     )
-    st.markdown(
-        "Visual summary of the selected quarter. "
-        "Highlights the most important signals, fund metrics, "
-        "portfolio activity, and concentration shifts across all tracked funds."
+    st.caption(
+        "Signals · fund metrics · activity · concentration — all in one view."
     )
 
     quarter = st.session_state.get("selected_quarter")
@@ -167,7 +221,10 @@ def render() -> None:
     signals: CrossFundSignals | None = st.session_state.get(
         "cross_signals", {}
     ).get(quarter)
-    _render_findings(diffs, signals)
+    baselines: dict[str, FundBaseline] | None = st.session_state.get(
+        "fund_baselines", {}
+    ).get(quarter)
+    _render_findings(diffs, signals, baselines=baselines)
 
     # ---------------------------------------------------------------
     # Row 1: Summary metrics
@@ -198,21 +255,18 @@ def render() -> None:
     # ---------------------------------------------------------------
     st.markdown("#### Fund Summary")
     st.caption(
-        "One row per fund sorted by AUM. Sortable columns: "
-        "new/exited position counts, significant adds (>50% share increase) "
-        "and trims (>60% decrease), top-10 concentration, HHI change "
-        "(+ = concentrating, − = diversifying), and filing lag."
+        "Sorted by AUM. Click any column header to re-sort. "
+        "HHI Δ: + = concentrating, − = diversifying."
     )
     _render_fund_summary_table(diffs)
 
     # ---------------------------------------------------------------
     # Row 3: Top Position Moves (full width)
     # ---------------------------------------------------------------
+    st.markdown("#### Top Position Moves")
     st.caption(
-        "The largest individual stock moves across ALL funds this quarter: "
-        "new initiations (green), exits (red), significant adds >50% "
-        "(light green), and trims >60% (light red). "
-        "Ranked by portfolio weight change — not dollar size."
+        "Ranked by weight change, not dollar size. "
+        "🟢 New · 🔴 Exit · light green = add >50% · light red = trim >60%."
     )
     st.plotly_chart(
         top_moves_chart(diffs), use_container_width=True
@@ -221,11 +275,8 @@ def render() -> None:
     # ---------------------------------------------------------------
     # Row 5: Activity Heatmap (full width)
     # ---------------------------------------------------------------
-    st.caption(
-        "Which funds are making the biggest portfolio shifts? "
-        "Darker cells = more activity in that category. "
-        "Compare rows to spot active vs. quiet funds."
-    )
+    st.markdown("#### Activity Heatmap")
+    st.caption("Darker = more activity. Compare rows to spot active vs. quiet funds.")
     q_num = (quarter.month - 1) // 3 + 1
     q_label = f"Q{q_num} {quarter.year}"
     st.plotly_chart(
@@ -238,8 +289,7 @@ def render() -> None:
     # ---------------------------------------------------------------
     st.markdown("#### Portfolio Concentration")
     st.caption(
-        "Top-10 weight = share of AUM in the 10 largest positions. "
-        "HHI Δ = change in Herfindahl index (bps); positive = concentrating, "
-        "negative = diversifying. Sorted by absolute HHI change."
+        "Top-10 weight = % of AUM in 10 largest positions. "
+        "HHI Δ (bps): 📈 positive = concentrating, 📉 negative = diversifying."
     )
     _render_concentration_table(diffs)

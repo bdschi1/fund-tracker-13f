@@ -58,6 +58,10 @@ def init_session_state() -> None:
     # Sync watchlist funds into database
     st.session_state.store.upsert_funds(st.session_state.watchlist)
 
+    # Pre-seed CUSIP→ticker cache from bundled master list
+    seed_path = settings.watchlist_path.parent / "cusip_tickers.json"
+    st.session_state.store.seed_cusip_cache(seed_path)
+
     # Current UI selections — auto-detect most recent quarter if DB has data
     quarters = st.session_state.store.get_all_available_quarters()
     st.session_state.selected_quarter = quarters[0] if quarters else None
@@ -67,6 +71,8 @@ def init_session_state() -> None:
     # Computed results cache (per quarter)
     st.session_state.fund_diffs = {}
     st.session_state.cross_signals = {}
+    st.session_state.fund_baselines = {}  # {quarter: {cik: FundBaseline}}
+    st.session_state.sector_data = {}     # {quarter: {ticker: {sector, float_shares, ...}}}
 
     st.session_state.initialized = True
 

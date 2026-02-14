@@ -23,10 +23,9 @@ def render() -> None:
         "Export Report</h2>",
         unsafe_allow_html=True,
     )
-    st.markdown(
-        "Generates a complete quarterly 13F analysis report in Markdown format. "
-        "Includes cross-fund signals, crowded trades, divergences, and "
-        "optional per-fund breakdowns. Preview below, then download."
+    st.caption(
+        "Full quarterly report in Markdown — cross-fund signals, crowded trades, "
+        "divergences, per-fund breakdowns. Preview below, then download."
     )
 
     quarter = st.session_state.get("selected_quarter")
@@ -55,12 +54,16 @@ def render() -> None:
         )
 
     # Generate report
+    baselines = st.session_state.get(
+        "fund_baselines", {},
+    ).get(quarter)
     report_md = generate_quarterly_report(
         fund_diffs=diffs,
         signals=signals,
         quarter=quarter,
         include_fund_details=include_details,
         max_positions_per_section=max_positions,
+        baselines=baselines,
     )
 
     # Download button

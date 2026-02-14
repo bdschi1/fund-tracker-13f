@@ -92,10 +92,8 @@ def render() -> None:
         "Stock Analysis</h2>",
         unsafe_allow_html=True,
     )
-    st.markdown(
-        "Enter a ticker to see how every tracked fund is positioned "
-        "in that stock — who's buying, selling, initiating, or exiting, "
-        "with QoQ share changes and portfolio weights."
+    st.caption(
+        "Search a ticker across all funds — who's buying, selling, initiating, or exiting."
     )
 
     quarter: date | None = st.session_state.get("selected_quarter")
@@ -183,6 +181,22 @@ def render() -> None:
         f"Aggregate 13F-reported value across all funds: "
         f"**{_esc(_fmt_val(total_current_val))}**"
     )
+
+    # Float ownership context (if sector enrichment available)
+    sector_data = st.session_state.get("sector_data", {}).get(quarter, {})
+    if ticker != "—" and ticker in sector_data:
+        info = sector_data[ticker]
+        float_shares = info.get("float_shares")
+        if float_shares and float_shares > 0:
+            agg_shares = sum(m["current_shares"] for m in matches)
+            if agg_shares > 0:
+                float_pct = agg_shares / float_shares * 100
+                color = "🔴" if float_pct >= 10 else "🟡" if float_pct >= 5 else "🟢"
+                st.caption(
+                    f"**Float ownership**: {color} tracked funds hold "
+                    f"**{float_pct:.1f}%** of the public float "
+                    f"({agg_shares:,.0f} of {float_shares:,.0f} shares)"
+                )
 
     st.divider()
 
