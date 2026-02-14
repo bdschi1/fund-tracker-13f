@@ -32,6 +32,7 @@ def resolve_cusips(
         [str, str | None, str | None, str | None], None
     ],
     api_key: str | None = None,
+    max_api_calls: int = 0,
 ) -> dict[str, str]:
     """Resolve a list of CUSIPs to tickers.
 
@@ -42,6 +43,8 @@ def resolve_cusips(
         cache_read: Function(cusip) -> ticker or None.
         cache_write: Function(cusip, ticker, name, exchange).
         api_key: Optional OpenFIGI API key for higher limits.
+        max_api_calls: Cap on API batches (0 = unlimited). Use during
+            interactive analysis to avoid long waits on the free tier.
 
     Returns:
         {cusip: ticker} mapping. Unresolved CUSIPs are omitted.
@@ -64,12 +67,22 @@ def resolve_cusips(
         return {k: v for k, v in result.items() if v}
 
     logger.info(
-        "Resolving %d unknown CUSIPs via OpenFIGI", len(unknown),
+        "%d cached, %d to resolve", len(result), len(unknown),
     )
 
     # Select batch size and delay based on whether we have a key
     batch_size = BATCH_SIZE_KEYED if api_key else BATCH_SIZE_FREE
     delay = DELAY_KEYED if api_key else DELAY_FREE
+
+    # Cap API calls if requested (interactive mode)
+    if max_api_calls > 0:
+        max_cusips = max_api_calls * batch_size
+        if len(unknown) > max_cusips:
+            logger.info(
+                "Capping resolution to %d CUSIPs (%d batches)",
+                max_cusips, max_api_calls,
+            )
+            unknown = unknown[:max_cusips]
 
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if api_key:

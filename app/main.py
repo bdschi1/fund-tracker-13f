@@ -147,8 +147,18 @@ def fetch_filings(
     return total_processed
 
 
-def resolve_all_cusips(quarter: date) -> int:
-    """Resolve all CUSIPs for a quarter to tickers. Returns count resolved."""
+def resolve_all_cusips(
+    quarter: date, *, max_api_calls: int = 0,
+) -> int:
+    """Resolve all CUSIPs for a quarter to tickers. Returns count resolved.
+
+    Args:
+        quarter: Filing quarter to resolve CUSIPs for.
+        max_api_calls: Cap on OpenFIGI API batches (0 = unlimited).
+            Use a small cap (e.g. 5) during interactive analysis to avoid
+            long waits on the free tier. The bundled seed file covers
+            99%+ by dollar value, so most CUSIPs resolve from cache.
+    """
     store: HoldingsStore = st.session_state.store
     cache: DataCache = st.session_state.cache
 
@@ -161,6 +171,7 @@ def resolve_all_cusips(quarter: date) -> int:
         cache_read=cache.cusip_cache_read,
         cache_write=cache.cusip_cache_write,
         api_key=settings.openfigi_api_key,
+        max_api_calls=max_api_calls,
     )
     return len(resolved)
 
@@ -363,7 +374,7 @@ def _run_full_pipeline(n_quarters: int) -> None:
         st.write(
             f"**② Resolving CUSIPs for {quarter}…**"
         )
-        cusip_count = resolve_all_cusips(quarter)
+        cusip_count = resolve_all_cusips(quarter, max_api_calls=10)
         st.write(f"✓ {cusip_count} CUSIPs resolved")
 
     # Step 3 — Enrich sectors (yfinance)
@@ -458,7 +469,7 @@ def render_sidebar() -> str:
                 help="Compare this quarter to the prior quarter",
             ):
                 with st.spinner("Resolving CUSIPs & enriching…"):
-                    resolve_all_cusips(q)
+                    resolve_all_cusips(q, max_api_calls=5)
                     _enrich_quarter_sectors(q)
                 with st.spinner("Analyzing..."):
                     diffs, signals = run_analysis(q)
