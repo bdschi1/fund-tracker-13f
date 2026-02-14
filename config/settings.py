@@ -103,6 +103,20 @@ class Settings(BaseSettings):
         description="Show top-N changes for multi-strat (Tier A) funds",
     )
 
+    # --- Interactive Brokers (optional) ---
+    ib_host: str = Field(
+        default="127.0.0.1",
+        description="IB TWS/Gateway hostname",
+    )
+    ib_port: int = Field(
+        default=7497,
+        description="IB TWS/Gateway port (7497=TWS paper, 7496=TWS live, 4002=Gateway paper)",
+    )
+    ib_client_id: int = Field(
+        default=10,
+        description="IB client ID for this connection",
+    )
+
     # --- Application ---
     log_level: str = Field(default="INFO", description="Logging level")
     watchlist_path: Path = Field(

@@ -415,6 +415,36 @@ def render_sidebar() -> str:
         with st.expander("Fund Tiers", expanded=False):
             render_tier_filter()
 
+        # Data source selector — auto-detects available providers
+        with st.expander("Data Source", expanded=False):
+            from data.provider_factory import (
+                PROVIDER_DESCRIPTIONS,
+                available_providers,
+                get_provider_safe,
+            )
+
+            avail = available_providers()
+            current_source = st.session_state.get("data_source", "Yahoo Finance")
+            if current_source not in avail:
+                current_source = avail[0] if avail else "Yahoo Finance"
+
+            source = st.selectbox(
+                "Provider",
+                options=avail,
+                index=avail.index(current_source) if current_source in avail else 0,
+                key="data_source_select",
+                help=(
+                    "Switch the market data provider. Interactive Brokers "
+                    "requires TWS or IB Gateway running locally."
+                ),
+            )
+            if source in PROVIDER_DESCRIPTIONS:
+                st.caption(PROVIDER_DESCRIPTIONS[source])
+
+            if source != st.session_state.get("data_source"):
+                st.session_state["data_source"] = source
+                st.session_state["market_provider"] = get_provider_safe(source)
+
         if has_data and q:
             already_analyzed = q in st.session_state.get("fund_diffs", {})
 

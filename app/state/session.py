@@ -74,6 +74,10 @@ def init_session_state() -> None:
     st.session_state.fund_baselines = {}  # {quarter: {cik: FundBaseline}}
     st.session_state.sector_data = {}     # {quarter: {ticker: {sector, float_shares, ...}}}
 
+    # Market data provider (default: Yahoo Finance)
+    st.session_state.data_source = "Yahoo Finance"
+    st.session_state.market_provider = None  # lazy-initialized on first use
+
     st.session_state.initialized = True
 
     if quarters:

@@ -1,8 +1,9 @@
 """Price performance provider.
 
-Fetches current price and period returns (1w, 1m, YTD, 1yr) from yfinance.
-Results cached in SQLite with configurable staleness (default 12 hours).
-Only called for the handful of tickers that appear in Top Findings.
+Fetches current price and period returns (1w, 1m, YTD, 1yr) via the active
+MarketDataProvider.  Results cached in SQLite with configurable staleness
+(default 12 hours).  Only called for the handful of tickers that appear
+in Top Findings.
 """
 
 from __future__ import annotations
@@ -10,9 +11,8 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 
-import yfinance as yf
-
 from data.cache import DataCache
+from data.provider import MarketDataProvider
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ def fetch_price_performance(
     tickers: list[str],
     cache: DataCache,
     max_age_hours: int = 12,
+    provider: MarketDataProvider | None = None,
 ) -> dict[str, dict]:
     """Fetch price performance for tickers, using cache when possible.
 
@@ -47,12 +48,18 @@ def fetch_price_performance(
         tickers: Ticker symbols to look up.
         cache: DataCache instance for reading/writing.
         max_age_hours: Re-fetch if cached data is older than this.
+        provider: MarketDataProvider instance. Defaults to YahooProvider.
 
     Returns:
         ``{ticker: performance_dict}`` for tickers with data.
     """
     if not tickers:
         return {}
+
+    # Lazy default to Yahoo
+    if provider is None:
+        from data.yahoo_provider import YahooProvider
+        provider = YahooProvider()
 
     result: dict[str, dict] = {}
     to_fetch: list[str] = []
@@ -71,39 +78,36 @@ def fetch_price_performance(
         return result
 
     logger.info(
-        "Fetching price performance for %d tickers from yfinance",
+        "Fetching price performance for %d tickers via %s",
         len(to_fetch),
+        provider.name,
     )
 
     today = date.today()
-    start_date = today - timedelta(days=400)  # ~13 months of history
     ytd_start = date(today.year, 1, 1)
 
     for ticker in to_fetch:
         try:
-            hist = yf.Ticker(ticker).history(
-                start=start_date.isoformat(),
-                end=(today + timedelta(days=1)).isoformat(),
-                auto_adjust=True,
-            )
-            if hist.empty:
+            rows = provider.fetch_price_history(ticker, days=400)
+            if not rows:
                 logger.debug("No price history for %s", ticker)
                 continue
 
-            current_price = float(hist["Close"].iloc[-1])
+            # Build a date → close lookup
+            closes: dict[date, float] = {r["date"]: r["close"] for r in rows}
+            current_price = rows[-1]["close"]
 
             def _close_on_or_before(target: date) -> float | None:
-                mask = hist.index.date <= target
-                subset = hist.loc[mask]
-                if subset.empty:
-                    return None
-                return float(subset["Close"].iloc[-1])
+                # Walk backwards up to 10 days to find a trading day
+                for offset in range(11):
+                    d = target - timedelta(days=offset)
+                    if d in closes:
+                        return closes[d]
+                return None
 
             close_1w = _close_on_or_before(today - timedelta(weeks=1))
             close_1m = _close_on_or_before(today - timedelta(days=30))
-            close_ytd = _close_on_or_before(
-                ytd_start - timedelta(days=1),
-            )
+            close_ytd = _close_on_or_before(ytd_start - timedelta(days=1))
             close_1yr = _close_on_or_before(today - timedelta(days=365))
 
             perf = {

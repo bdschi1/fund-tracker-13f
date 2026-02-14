@@ -1,6 +1,7 @@
-"""Yahoo Finance implementation of PriceProvider.
+"""Yahoo Finance data provider (default).
 
-Uses yfinance for free price data. Batches requests for efficiency.
+Wraps yfinance to implement the MarketDataProvider interface.
+Free, no API key required.  EOD data with ~18-hour delay.
 """
 
 from __future__ import annotations
@@ -10,108 +11,86 @@ from datetime import date, timedelta
 
 import yfinance as yf
 
-from data.price_provider import PriceProvider
+from data.provider import MarketDataProvider
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 50  # yfinance works well with ~50 tickers at a time
 
-
-class YahooPriceProvider(PriceProvider):
-    """Fetch prices via yfinance (free, no API key)."""
+class YahooProvider(MarketDataProvider):
+    """Yahoo Finance provider — free, no account required."""
 
     @property
     def name(self) -> str:
         return "Yahoo Finance"
 
-    def fetch_current_prices(self, tickers: list[str]) -> dict[str, float]:
-        """Fetch latest closing price for each ticker."""
-        result: dict[str, float] = {}
-        for batch in _chunked(tickers, BATCH_SIZE):
-            try:
-                data = yf.download(
-                    batch,
-                    period="5d",
-                    progress=False,
-                    threads=True,
-                )
-                if data.empty:
-                    continue
+    # ------------------------------------------------------------------
+    # Price history
+    # ------------------------------------------------------------------
 
-                close = data["Close"]
-                if len(batch) == 1:
-                    # Single ticker: close is a Series, not a DataFrame
-                    last = close.dropna()
-                    if not last.empty:
-                        result[batch[0]] = float(last.iloc[-1])
-                else:
-                    for ticker in batch:
-                        if ticker in close.columns:
-                            col = close[ticker].dropna()
-                            if not col.empty:
-                                result[ticker] = float(col.iloc[-1])
-            except Exception:
-                logger.warning(
-                    "Failed to fetch current prices for batch of %d",
-                    len(batch),
-                    exc_info=True,
-                )
-        return result
+    def fetch_price_history(
+        self,
+        ticker: str,
+        days: int = 400,
+    ) -> list[dict]:
+        """Fetch daily OHLCV bars from yfinance."""
+        today = date.today()
+        start = today - timedelta(days=days)
 
-    def fetch_prices_on_date(
-        self, tickers: list[str], target_date: date
-    ) -> dict[str, float]:
-        """Fetch closing price on or near a specific date.
+        try:
+            hist = yf.Ticker(ticker).history(
+                start=start.isoformat(),
+                end=(today + timedelta(days=1)).isoformat(),
+                auto_adjust=True,
+            )
+            if hist.empty:
+                logger.debug("No price history for %s", ticker)
+                return []
 
-        Looks at a 5-day window around the target date to handle weekends/holidays.
-        """
-        start = target_date - timedelta(days=5)
-        end = target_date + timedelta(days=3)
-        result: dict[str, float] = {}
+            rows: list[dict] = []
+            for idx, row in hist.iterrows():
+                rows.append({
+                    "date": idx.date() if hasattr(idx, "date") else idx,
+                    "open": float(row["Open"]),
+                    "high": float(row["High"]),
+                    "low": float(row["Low"]),
+                    "close": float(row["Close"]),
+                    "volume": float(row["Volume"]),
+                })
+            return rows
 
-        for batch in _chunked(tickers, BATCH_SIZE):
-            try:
-                data = yf.download(
-                    batch,
-                    start=str(start),
-                    end=str(end),
-                    progress=False,
-                    threads=True,
-                )
-                if data.empty:
-                    continue
+        except Exception:
+            logger.debug(
+                "Failed to fetch price history for %s",
+                ticker, exc_info=True,
+            )
+            return []
 
-                close = data["Close"]
-                if len(batch) == 1:
-                    col = close.dropna()
-                    if not col.empty:
-                        # Get the price closest to (but not after) target_date
-                        before = col[col.index.date <= target_date]
-                        if not before.empty:
-                            result[batch[0]] = float(before.iloc[-1])
-                        else:
-                            result[batch[0]] = float(col.iloc[0])
-                else:
-                    for ticker in batch:
-                        if ticker in close.columns:
-                            col = close[ticker].dropna()
-                            if not col.empty:
-                                before = col[col.index.date <= target_date]
-                                if not before.empty:
-                                    result[ticker] = float(before.iloc[-1])
-                                else:
-                                    result[ticker] = float(col.iloc[0])
-            except Exception:
-                logger.warning(
-                    "Failed to fetch prices on %s for batch of %d",
-                    target_date,
-                    len(batch),
-                    exc_info=True,
-                )
-        return result
+    # ------------------------------------------------------------------
+    # Fundamentals
+    # ------------------------------------------------------------------
 
+    def fetch_ticker_info(self, ticker: str) -> dict:
+        """Fetch sector/industry/float data from yfinance .info."""
+        defaults: dict = {
+            "sector": None,
+            "industry": None,
+            "market_cap": None,
+            "shares_outstanding": None,
+            "float_shares": None,
+        }
 
-def _chunked(lst: list, size: int):
-    """Yield successive chunks of size from lst."""
-    for i in range(0, len(lst), size):
-        yield lst[i : i + size]
+        try:
+            info = yf.Ticker(ticker).info
+            return {
+                "sector": info.get("sector"),
+                "industry": info.get("industry"),
+                "market_cap": info.get("marketCap"),
+                "shares_outstanding": info.get("sharesOutstanding"),
+                "float_shares": info.get("floatShares"),
+            }
+        except Exception:
+            logger.debug(
+                "Failed to fetch ticker info for %s",
+                ticker, exc_info=True,
+            )
+            return defaults

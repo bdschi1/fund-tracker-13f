@@ -22,6 +22,9 @@ dev = [
     "pytest-cov>=6.0.0",
     "ruff>=0.8.0",
 ]
+ib = [
+    "ib_insync>=0.9.86",
+]
 
 [tool.ruff]
 target-version = "py312"

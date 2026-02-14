@@ -20,13 +20,14 @@ SEC 13F-HR filing analyzer tracking 52 hedge funds and asset managers across 5 t
 - **Bundled CUSIP-to-ticker mapping** — 4,500+ CUSIP mappings ship with the repo (`config/cusip_tickers.json`) covering Russell 1000/2000, major ETFs, and crypto ETFs. Instant ticker resolution on new installs without API calls
 - **Fallback CUSIP resolution** — unknown CUSIPs are resolved via OpenFIGI API and cached in SQLite permanently
 - **Price performance tags** — Top Findings show 1w / 1m / YTD / 1yr returns next to each ticker
+- **Multi-provider market data** — pluggable data provider architecture (Yahoo Finance default, Interactive Brokers optional). Switch providers in the sidebar
 - **Pod-shop risk metrics** — crowding risk, float ownership analysis, sector concentration flows
 - **9 quarters of historical data** — QoQ analysis spans back to Q1 2024 for robust baselines
 
 ## Setup
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
 Copy the environment template and set your EDGAR user agent:
@@ -48,6 +49,21 @@ FT13F_OPENFIGI_API_KEY="your-key"
 ```
 
 Without a key, the bundled `config/cusip_tickers.json` covers ~99.7% of holdings by dollar value. The API key is only needed to resolve edge-case CUSIPs (SPACs, obscure trusts, etc.).
+
+### Optional: Interactive Brokers
+
+For real-time market data via TWS or IB Gateway:
+
+```bash
+pip install -e ".[ib]"
+```
+
+Ensure TWS or IB Gateway is running locally, then select **Interactive Brokers** in the sidebar Data Source expander. Connection defaults: `localhost:7497` (TWS paper). Override in `.env`:
+
+```
+FT13F_IB_HOST="127.0.0.1"
+FT13F_IB_PORT=7497
+```
 
 ## Run
 
@@ -76,7 +92,8 @@ python scripts/export_cusip_seed.py
 
 - **UI**: Streamlit, Plotly
 - **Data**: Pydantic, SQLite, httpx, lxml
-- **Sources**: SEC EDGAR (13F-HR filings), Yahoo Finance (prices), OpenFIGI (CUSIP resolution)
+- **Market Data**: Yahoo Finance (default), Interactive Brokers (optional)
+- **Sources**: SEC EDGAR (13F-HR filings), OpenFIGI (CUSIP resolution)
 
 ## Fund Tiers
 
@@ -102,15 +119,20 @@ core/
   diff_engine.py       Quarter-over-quarter position change detection
   report.py            Markdown report generation
 data/
+  provider.py          MarketDataProvider ABC (price history + fundamentals)
+  yahoo_provider.py    Yahoo Finance provider (default, free)
+  ib_provider.py       Interactive Brokers provider (optional, real-time)
+  provider_factory.py  Auto-discovery factory with fallback
   store.py             SQLite persistence (holdings, funds, cusip_map, prices)
   edgar_client.py      SEC EDGAR 13F-HR filing downloader
   filing_parser.py     XML/HTML filing parser
   cusip_resolver.py    OpenFIGI CUSIP-to-ticker resolution
   performance_provider.py  Price performance (1w/1m/YTD/1yr returns)
+  sector_provider.py   Sector/industry classification
 config/
   watchlist.yaml       Fund watchlist (52 funds, 5 tiers)
   cusip_tickers.json   Bundled CUSIP-to-ticker seed (4,500+ mappings)
-  settings.py          App configuration
+  settings.py          App configuration + IB connection settings
 scripts/
   export_cusip_seed.py Update bundled CUSIP seed from database
 tests/
@@ -128,3 +150,14 @@ ruff check .
 ## License
 
 MIT
+
+---
+
+![Python](https://img.shields.io/badge/python-3.12+-3776AB?style=flat&logo=python&logoColor=white)
+
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat&logo=streamlit&logoColor=white)
+![Plotly](https://img.shields.io/badge/Plotly-3F4F75?style=flat&logo=plotly&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat&logo=sqlite&logoColor=white)
+![SEC EDGAR](https://img.shields.io/badge/SEC_EDGAR-003366?style=flat)
+![Yahoo Finance](https://img.shields.io/badge/Yahoo_Finance-6001D2?style=flat&logo=yahoo&logoColor=white)
+![Interactive Brokers](https://img.shields.io/badge/Interactive_Brokers-D71920?style=flat)
