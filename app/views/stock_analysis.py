@@ -47,15 +47,33 @@ def _find_matches(
 ) -> list[dict]:
     """Search all position changes across funds for a ticker/name match.
 
-    Returns a list of dicts with fund + position details.
+    Exact ticker match always works.  Name substring search only kicks in
+    for queries of 3+ characters to avoid false positives (e.g. "A" matching
+    every issuer, or "LLY" matching both "ELI LILLY" and "OREILLY").
+    When an exact ticker match exists, name-only matches are excluded.
     """
     q = query.strip().upper()
     results: list[dict] = []
+    has_ticker_match = False
+
+    # First pass: check if there's any exact ticker match
+    for d in diffs:
+        for p in d.all_changes + d.unchanged_positions:
+            if p.ticker and p.ticker.upper() == q:
+                has_ticker_match = True
+                break
+        if has_ticker_match:
+            break
 
     for d in diffs:
         for p in d.all_changes + d.unchanged_positions:
             ticker_match = p.ticker and p.ticker.upper() == q
-            name_match = q in p.issuer_name.upper()
+            # Only do name search for 3+ char queries and when no exact ticker match exists
+            name_match = (
+                not has_ticker_match
+                and len(q) >= 3
+                and q in p.issuer_name.upper()
+            )
 
             if not (ticker_match or name_match):
                 continue
@@ -143,7 +161,10 @@ def render() -> None:
     # Resolve display name from first match
     ticker = matches[0]["ticker"]
     issuer = matches[0]["issuer"]
-    display_name = f"**{ticker}**" if ticker != "—" else f"**{issuer}**"
+    issuer_display = issuer.title() if issuer else ""
+    display_name = (
+        f"**{ticker}** · {issuer_display}" if ticker != "—" else f"**{issuer_display}**"
+    )
 
     # --- Summary metrics ---
     n_funds_holding = len(matches)
