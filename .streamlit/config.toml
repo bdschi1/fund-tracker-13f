@@ -5,7 +5,7 @@ secondaryBackgroundColor = "#262730"
 textColor = "#fafafa"
 
 [server]
-headless = false
+headless = true
 runOnSave = true
 maxUploadSize = 5
 
