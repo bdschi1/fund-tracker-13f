@@ -6,10 +6,16 @@ Entry point: streamlit run app/main.py
 from __future__ import annotations
 
 import logging
+import sys
 from datetime import date
 from pathlib import Path
 
-import streamlit as st
+# Ensure project root is on sys.path (required for Streamlit Cloud)
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+import streamlit as st  # noqa: E402
 
 st.set_page_config(
     page_title="Fund Tracker 13F",
