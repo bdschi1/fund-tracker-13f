@@ -52,7 +52,6 @@ from core.report import generate_quarterly_report  # noqa: E402
 from data.cache import DataCache  # noqa: E402
 from data.edgar_client import EdgarClient  # noqa: E402
 from data.filing_parser import parse_info_table_xml  # noqa: E402
-from data.sector_provider import enrich_sectors  # noqa: E402
 from data.store import HoldingsStore  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -164,26 +163,6 @@ def resolve_all_cusips(quarter: date) -> int:
     return len(resolved)
 
 
-def _enrich_quarter_sectors(quarter: date) -> int:
-    """Enrich tickers for a quarter with sector/industry/float data from yfinance.
-
-    Returns count of tickers enriched.
-    """
-    store: HoldingsStore = st.session_state.store
-    cache: DataCache = st.session_state.cache
-
-    # Get unique tickers for this quarter
-    cusips = store.get_unique_cusips_for_quarter(quarter)
-    ticker_map = cache.get_cusip_tickers(cusips)
-    tickers = list(set(ticker_map.values()))
-
-    if not tickers:
-        return 0
-
-    enriched = enrich_sectors(tickers, cache)
-    return len([t for t in enriched.values() if t.get("sector")])
-
-
 def run_analysis(quarter: date) -> tuple[list[FundDiff], CrossFundSignals]:
     """Run the full analysis pipeline for a quarter.
 
@@ -202,7 +181,7 @@ def run_analysis(quarter: date) -> tuple[list[FundDiff], CrossFundSignals]:
     cusips = store.get_unique_cusips_for_quarter(quarter)
     ticker_map = cache.get_cusip_tickers(cusips)
 
-    # Get sector/float data from cache (populated by _enrich_quarter_sectors)
+    # Get sector/float data from cache (if available)
     tickers = list(set(ticker_map.values()))
     sector_map = cache.get_sector_info_bulk(tickers) if tickers else {}
 
@@ -356,8 +335,8 @@ def _run_full_pipeline(n_quarters: int) -> None:
     quarter = quarters[0]
     st.session_state["selected_quarter"] = quarter
 
-    # Step 2 — Resolve CUSIPs
-    pipeline_bar.progress(0.65, text="② Resolving CUSIPs…")
+    # Step 2 — Resolve CUSIPs + Analyze
+    pipeline_bar.progress(0.70, text="② Resolving CUSIPs…")
     with status:
         st.write(
             f"**② Resolving CUSIPs for {quarter}…**"
@@ -365,17 +344,9 @@ def _run_full_pipeline(n_quarters: int) -> None:
         cusip_count = resolve_all_cusips(quarter)
         st.write(f"✓ {cusip_count} CUSIPs resolved")
 
-    # Step 3 — Enrich sectors (yfinance)
-    pipeline_bar.progress(0.75, text="③ Enriching sectors & float…")
+    pipeline_bar.progress(0.85, text="③ Analyzing…")
     with status:
-        st.write("**③ Enriching sectors & float data…**")
-        sector_count = _enrich_quarter_sectors(quarter)
-        st.write(f"✓ {sector_count} tickers enriched")
-
-    # Step 4 — Analyze
-    pipeline_bar.progress(0.90, text="④ Analyzing…")
-    with status:
-        st.write("**④ Running analysis engine…**")
+        st.write("**③ Running analysis engine…**")
         diffs, signals = run_analysis(quarter)
         st.session_state.fund_diffs[quarter] = diffs
         st.session_state.cross_signals[quarter] = signals
@@ -456,9 +427,6 @@ def render_sidebar() -> str:
                 type=btn_type,
                 help="Compare this quarter to the prior quarter",
             ):
-                with st.spinner("Resolving CUSIPs & enriching…"):
-                    resolve_all_cusips(q)
-                    _enrich_quarter_sectors(q)
                 with st.spinner("Analyzing..."):
                     diffs, signals = run_analysis(q)
                     st.session_state.fund_diffs[q] = diffs
