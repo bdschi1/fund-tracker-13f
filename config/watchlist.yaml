@@ -1,5 +1,5 @@
 # Fund Tracker 13F — Watchlist
-# 45 hedge funds/asset managers tracked via SEC 13F-HR filings
+# 44 hedge funds/asset managers tracked via SEC 13F-HR filings
 #
 # Tiers:
 #   A: Multi-Strat (filter to top positions only — noisy due to hedging)
