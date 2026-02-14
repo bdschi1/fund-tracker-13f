@@ -6,6 +6,7 @@ __pycache__/
 dist/
 build/
 *.egg
+*.whl
 
 # Virtual environments
 .venv/
@@ -17,9 +18,12 @@ env/
 .vscode/
 *.swp
 *.swo
+*~
 
 # Environment
 .env
+.env.*
+!.env.example
 
 # Data cache (SQLite DB, fetched data)
 data_cache/
@@ -28,11 +32,19 @@ data_cache/
 # OS
 .DS_Store
 Thumbs.db
+Desktop.ini
 
 # Streamlit
 .streamlit/secrets.toml
 
-# Testing
+# Testing / tooling
 .coverage
 htmlcov/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Outputs
+results/
+outputs/
+logs/

@@ -1,6 +1,6 @@
 # Fund Tracker 13F
 
-SEC 13F-HR filing analyzer tracking 44 hedge funds across 5 tiers. Surfaces high-conviction moves — new positions, full exits, concentrated adds, and consensus trades — ranked by signal strength (% share change), not dollar size.
+SEC 13F-HR filing analyzer tracking 52 hedge funds across 5 tiers. Surfaces high-conviction moves — new positions, full exits, concentrated adds, and consensus trades — ranked by signal strength (% share change), not dollar size.
 
 ## Pages
 
@@ -56,11 +56,11 @@ Click **Fetch & Analyze** in the sidebar. This downloads filings from SEC EDGAR,
 
 | Tier | Category | Count |
 |------|----------|-------|
-| A | Multi-Strat | 4 |
-| B | Stock Pickers / Tiger Cubs | 15 |
+| A | Multi-Strat | 5 |
+| B | Stock Pickers / Tiger Cubs | 21 |
 | C | Event-Driven / Activist | 7 |
 | D | Emerging / Newer | 7 |
-| E | Healthcare Specialists | 11 |
+| E | Healthcare Specialists | 12 |
 
 ## Development
 

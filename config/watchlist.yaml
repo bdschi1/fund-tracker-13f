@@ -1,5 +1,5 @@
 # Fund Tracker 13F — Watchlist
-# 44 hedge funds/asset managers tracked via SEC 13F-HR filings
+# 52 hedge funds/asset managers tracked via SEC 13F-HR filings
 #
 # Tiers:
 #   A: Multi-Strat (filter to top positions only — noisy due to hedging)
@@ -26,6 +26,10 @@ funds:
 
   - name: Woodline Partners
     cik: "1784547"
+    tier: A
+
+  - name: FMR LLC
+    cik: "315066"
     tier: A
 
   # ---------------------------------------------------------------------------
@@ -91,13 +95,33 @@ funds:
     cik: "1389507"
     tier: B
 
+  - name: Pershing Square Capital Management
+    cik: "1336528"
+    tier: B
+
+  - name: Alkeon Capital Management
+    cik: "1230239"
+    tier: B
+
+  - name: Whale Rock Capital Management
+    cik: "1387322"
+    tier: B
+
+  - name: Altimeter Capital Management
+    cik: "1541617"
+    tier: B
+
+  - name: Greenlight Capital
+    cik: "1079114"
+    tier: B
+
+  - name: Berkshire Hathaway
+    cik: "1067983"
+    tier: B
+
   # ---------------------------------------------------------------------------
   # Tier C: Event-Driven / Activist
   # ---------------------------------------------------------------------------
-  - name: Elliott Investment Management
-    cik: "1791786"
-    tier: C
-
   - name: Farallon Capital Management
     cik: "909661"
     tier: C
@@ -120,6 +144,10 @@ funds:
 
   - name: Sarissa Capital
     cik: "1577524"
+    tier: C
+
+  - name: Third Point
+    cik: "1040273"
     tier: C
 
   # ---------------------------------------------------------------------------
@@ -196,6 +224,10 @@ funds:
 
   - name: Deerfield Management
     cik: "1009258"
+    tier: E
+
+  - name: Baker Brothers Advisors
+    cik: "1263508"
     tier: E
 
   - name: Palo Alto Investors
