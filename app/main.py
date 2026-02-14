@@ -50,7 +50,6 @@ from core.diff_engine import compute_fund_diff  # noqa: E402
 from core.models import CrossFundSignals, FundDiff, FundHoldings, FundInfo  # noqa: E402
 from core.report import generate_quarterly_report  # noqa: E402
 from data.cache import DataCache  # noqa: E402
-from data.cusip_resolver import resolve_cusips  # noqa: E402
 from data.edgar_client import EdgarClient  # noqa: E402
 from data.filing_parser import parse_info_table_xml  # noqa: E402
 from data.sector_provider import enrich_sectors  # noqa: E402
@@ -147,17 +146,12 @@ def fetch_filings(
     return total_processed
 
 
-def resolve_all_cusips(
-    quarter: date, *, max_api_calls: int = 0,
-) -> int:
-    """Resolve all CUSIPs for a quarter to tickers. Returns count resolved.
+def resolve_all_cusips(quarter: date) -> int:
+    """Resolve CUSIPs for a quarter from the bundled seed cache.
 
-    Args:
-        quarter: Filing quarter to resolve CUSIPs for.
-        max_api_calls: Cap on OpenFIGI API batches (0 = unlimited).
-            Use a small cap (e.g. 5) during interactive analysis to avoid
-            long waits on the free tier. The bundled seed file covers
-            99%+ by dollar value, so most CUSIPs resolve from cache.
+    No API calls — instant resolution from config/cusip_tickers.json
+    which is loaded into SQLite on startup. To resolve new CUSIPs,
+    run ``python scripts/resolve_new_cusips.py`` offline.
     """
     store: HoldingsStore = st.session_state.store
     cache: DataCache = st.session_state.cache
@@ -166,13 +160,7 @@ def resolve_all_cusips(
     if not cusips:
         return 0
 
-    resolved = resolve_cusips(
-        cusips=cusips,
-        cache_read=cache.cusip_cache_read,
-        cache_write=cache.cusip_cache_write,
-        api_key=settings.openfigi_api_key,
-        max_api_calls=max_api_calls,
-    )
+    resolved = cache.get_cusip_tickers(cusips)
     return len(resolved)
 
 
@@ -374,7 +362,7 @@ def _run_full_pipeline(n_quarters: int) -> None:
         st.write(
             f"**② Resolving CUSIPs for {quarter}…**"
         )
-        cusip_count = resolve_all_cusips(quarter, max_api_calls=10)
+        cusip_count = resolve_all_cusips(quarter)
         st.write(f"✓ {cusip_count} CUSIPs resolved")
 
     # Step 3 — Enrich sectors (yfinance)
@@ -469,7 +457,7 @@ def render_sidebar() -> str:
                 help="Compare this quarter to the prior quarter",
             ):
                 with st.spinner("Resolving CUSIPs & enriching…"):
-                    resolve_all_cusips(q, max_api_calls=5)
+                    resolve_all_cusips(q)
                     _enrich_quarter_sectors(q)
                 with st.spinner("Analyzing..."):
                     diffs, signals = run_analysis(q)
