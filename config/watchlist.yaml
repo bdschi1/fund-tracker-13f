@@ -1,0 +1,203 @@
+# Fund Tracker 13F — Watchlist
+# 45 hedge funds/asset managers tracked via SEC 13F-HR filings
+#
+# Tiers:
+#   A: Multi-Strat (filter to top positions only — noisy due to hedging)
+#   B: Stock Pickers / Tiger Cubs (cleanest signal)
+#   C: Event-Driven / Activist
+#   D: Emerging / Newer managers
+#   E: Healthcare Specialists
+
+funds:
+  # ---------------------------------------------------------------------------
+  # Tier A: Multi-Strat
+  # ---------------------------------------------------------------------------
+  - name: Point72 Asset Management
+    cik: "1603466"
+    tier: A
+
+  - name: Balyasny Asset Management
+    cik: "1218710"
+    tier: A
+
+  - name: Schonfeld Strategic Advisors
+    cik: "1665241"
+    tier: A
+
+  - name: Woodline Partners
+    cik: "1784547"
+    tier: A
+
+  # ---------------------------------------------------------------------------
+  # Tier B: Stock Pickers / Tiger Cubs
+  # ---------------------------------------------------------------------------
+  - name: Viking Global Investors
+    cik: "1103804"
+    tier: B
+
+  - name: Lone Pine Capital
+    cik: "1061165"
+    tier: B
+
+  - name: Maverick Capital
+    cik: "934639"
+    tier: B
+
+  - name: Select Equity Group
+    cik: "1592643"
+    tier: B
+
+  - name: TCI Fund Management
+    cik: "1647251"
+    tier: B
+
+  - name: Coatue Management
+    cik: "1135730"
+    tier: B
+
+  - name: Tiger Global Management
+    cik: "1167483"
+    tier: B
+
+  - name: D1 Capital Partners
+    cik: "1747057"
+    tier: B
+
+  - name: Light Street Capital
+    cik: "1569049"
+    tier: B
+
+  - name: Suvretta Capital
+    cik: "1569064"
+    tier: B
+
+  - name: Samlyn Capital
+    cik: "1421097"
+    tier: B
+
+  - name: Steadfast Capital
+    cik: "1214822"
+    tier: B
+
+  - name: Senator Investment Group
+    cik: "1443689"
+    tier: B
+
+  - name: Cadian Capital
+    cik: "1423686"
+    tier: B
+
+  - name: Discovery Capital Management
+    cik: "1389507"
+    tier: B
+
+  # ---------------------------------------------------------------------------
+  # Tier C: Event-Driven / Activist
+  # ---------------------------------------------------------------------------
+  - name: Elliott Investment Management
+    cik: "1791786"
+    tier: C
+
+  - name: Farallon Capital Management
+    cik: "909661"
+    tier: C
+
+  - name: Davidson Kempner
+    cik: "1595082"
+    tier: C
+
+  - name: Scopia Capital
+    cik: "1279150"
+    tier: C
+
+  - name: GMT Capital
+    cik: "1106191"
+    tier: C
+
+  - name: Glenview Capital Management
+    cik: "1138995"
+    tier: C
+
+  - name: Sarissa Capital
+    cik: "1577524"
+    tier: C
+
+  # ---------------------------------------------------------------------------
+  # Tier D: Emerging / Newer
+  # ---------------------------------------------------------------------------
+  - name: SurgoCap Partners
+    cik: "1960830"
+    tier: D
+
+  - name: Avala Global
+    cik: "1948899"
+    tier: D
+
+  - name: Kodai Capital
+    cik: "1999612"
+    tier: D
+
+  # Taula Capital (Diego Megia) removed — not a 13F filer (offshore only)
+
+  - name: 8 Knots Management
+    cik: "1849457"
+    tier: D
+
+  - name: Hawk Ridge Capital Management
+    cik: "1609074"
+    tier: D
+
+  - name: Jain Global
+    cik: "2024579"
+    tier: D
+
+  - name: Azora Capital
+    cik: "1700272"
+    tier: D
+
+  # ---------------------------------------------------------------------------
+  # Tier E: Healthcare Specialists
+  # ---------------------------------------------------------------------------
+  - name: RA Capital Management
+    cik: "1346824"
+    tier: E
+
+  - name: Orbimed Advisors
+    cik: "1055951"
+    tier: E
+
+  - name: Perceptive Advisors
+    cik: "1224962"
+    tier: E
+
+  - name: Redmile Group
+    cik: "1425738"
+    tier: E
+
+  - name: Soleus Capital Management
+    cik: "1802630"
+    tier: E
+
+  - name: Parkman Healthcare Partners
+    cik: "1777015"
+    tier: E
+
+  - name: Ridgeback Capital
+    cik: "1423994"
+    tier: E
+
+  - name: HealthCor Management
+    cik: "1519462"
+    tier: E
+
+  - name: Broadfin Capital
+    cik: "1511901"
+    tier: E
+
+  - name: Deerfield Management
+    cik: "1009258"
+    tier: E
+
+  - name: Palo Alto Investors
+    cik: "1306923"
+    tier: E

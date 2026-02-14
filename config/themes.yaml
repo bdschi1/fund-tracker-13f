@@ -1,0 +1,116 @@
+# Thematic groupings for sector clustering beyond GICS
+# Used to tag position changes with thematic context
+# Tickers can appear in multiple themes
+
+themes:
+  - name: "AI / GPU Supply Chain"
+    tickers:
+      - NVDA
+      - AMD
+      - AVGO
+      - MRVL
+      - ARM
+      - TSM
+      - SMCI
+      - ASML
+      - AMAT
+      - LRCX
+      - KLAC
+      - SNPS
+      - CDNS
+      - MU
+      - DELL
+      - VRT
+      - CIEN
+
+  - name: "AI Software / Cloud"
+    tickers:
+      - MSFT
+      - GOOGL
+      - GOOG
+      - AMZN
+      - META
+      - CRM
+      - SNOW
+      - PLTR
+      - MDB
+      - DDOG
+      - NET
+      - ORCL
+      - NOW
+
+  - name: "GLP-1 / Obesity"
+    tickers:
+      - LLY
+      - NVO
+      - VKTX
+      - AMGN
+      - GPCR
+      - ALT
+      - STRM
+
+  - name: "Cybersecurity"
+    tickers:
+      - CRWD
+      - PANW
+      - ZS
+      - FTNT
+      - S
+
+  - name: "Nuclear / Energy Transition"
+    tickers:
+      - CEG
+      - VST
+      - TLN
+      - SMR
+      - OKLO
+      - NNE
+      - CCJ
+      - LEU
+
+  - name: "Defense / Aerospace"
+    tickers:
+      - LMT
+      - RTX
+      - NOC
+      - GD
+      - BA
+      - HWM
+      - TDG
+      - PLTR
+
+  - name: "Biotech Large Cap"
+    tickers:
+      - AMGN
+      - GILD
+      - REGN
+      - VRTX
+      - BIIB
+      - MRNA
+      - AZN
+      - BMY
+
+  - name: "Fintech / Payments"
+    tickers:
+      - V
+      - MA
+      - PYPL
+      - SQ
+      - AFRM
+      - SOFI
+      - COIN
+      - FI
+      - GPN
+
+  - name: "China / EM Tech"
+    tickers:
+      - BABA
+      - PDD
+      - JD
+      - BIDU
+      - NIO
+      - LI
+      - XPEV
+      - KWEB
+      - MELI
+      - SE

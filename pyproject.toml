@@ -1,0 +1,45 @@
+[project]
+name = "fund-tracker-13f"
+version = "0.1.0"
+description = "13F Filing Analyzer — Track hedge fund position changes with signal-rich metrics"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+dependencies = [
+    "streamlit>=1.40.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.0.0",
+    "pyyaml>=6.0",
+    "httpx>=0.27.0",
+    "lxml>=5.0.0",
+    "yfinance>=0.2.46",
+    "plotly>=5.24.0",
+    "tenacity>=8.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["core", "data", "app", "config"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.setuptools.packages.find]
+include = ["core*", "data*", "app*", "config*"]
+
+[build-system]
+requires = ["setuptools>=69.0"]
+build-backend = "setuptools.build_meta"
