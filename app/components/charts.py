@@ -433,12 +433,23 @@ def fund_activity_heatmap(
     # Sort by total activity descending
     data.sort(key=lambda x: x["total"], reverse=True)
 
+    # Filter out low-activity funds (< 5 total moves) to reduce noise
+    min_activity = 5
+    data = [r for r in data if r["total"] >= min_activity]
+    if not data:
+        # Fallback: show top 10 if threshold filtered everything
+        data.sort(key=lambda x: x["total"], reverse=True)
+        data = data[:10]
+
     names = [r["name"] for r in data]
     cols = ["New", "Exited", "Adds >50%", "Trims >60%"]
     z = [
         [r["new"], r["exited"], r["sig_adds"], r["sig_trims"]]
         for r in data
     ]
+
+    n_rows = len(names)
+    row_height = 45  # px per row — enough to read numbers clearly
 
     fig = go.Figure(data=go.Heatmap(
         z=z,
@@ -449,22 +460,19 @@ def fund_activity_heatmap(
         texttemplate="%{text}",
         textfont={"size": 12},
     ))
-    # Show top 10 by default; user scrolls Plotly y-axis for rest
-    visible_rows = min(10, len(names))
     fig.update_layout(
         title=dict(
             text=f"Fund Activity — {quarter_label}" if quarter_label
             else "Fund Activity",
             y=0.98,
         ),
-        height=visible_rows * 35 + 100,
+        height=n_rows * row_height + 100,
         yaxis=dict(
             autorange="reversed",
             tickfont=dict(size=11),
-            range=[-0.5, visible_rows - 0.5],
         ),
         xaxis=dict(side="top", tickfont=dict(size=11)),
-        margin=dict(l=180, r=20, t=70, b=20),
+        margin=dict(l=220, r=20, t=70, b=20),
         template="plotly_white",
     )
     return fig
