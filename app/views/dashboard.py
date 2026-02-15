@@ -137,11 +137,17 @@ def _render_fund_summary_table(diffs: list[FundDiff]) -> None:
         })
 
     df = pd.DataFrame(rows)
+
     st.dataframe(
         df,
         use_container_width=True,
         hide_index=True,
         height=min(400, 38 * (len(rows) + 1)),
+        column_config={
+            "Fund": st.column_config.TextColumn(
+                "Fund", width="large", pinned=True,
+            ),
+        },
     )
 
 

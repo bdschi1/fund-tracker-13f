@@ -291,24 +291,41 @@ def render() -> None:
         "Fund Deep Dive</h2>",
         unsafe_allow_html=True,
     )
-    st.caption("QoQ analysis of a single fund. Select from sidebar or look up any CIK.")
+    st.caption("QoQ analysis of a single fund. Pick a fund below or look up any CIK.")
 
     quarter = st.session_state.get("selected_quarter")
     fund_diffs: dict[date, list[FundDiff]] = st.session_state.get(
         "fund_diffs", {},
     )
-    selected_cik = st.session_state.get("selected_fund_cik")
 
-    # --- Watchlist fund (sidebar selection) ---
-    if quarter and quarter in fund_diffs and selected_cik:
+    # --- Inline fund picker (always visible when analysis data exists) ---
+    if quarter and quarter in fund_diffs:
         diffs = fund_diffs[quarter]
-        diff = next(
-            (d for d in diffs if d.fund.cik == selected_cik),
-            None,
+        fund_names = [d.fund.name for d in diffs]
+
+        # Determine current selection index
+        selected_cik = st.session_state.get("selected_fund_cik")
+        current_idx = 0
+        if selected_cik:
+            for i, d in enumerate(diffs):
+                if d.fund.cik == selected_cik:
+                    current_idx = i
+                    break
+
+        chosen = st.selectbox(
+            "Select Fund",
+            options=fund_names,
+            index=current_idx,
+            key="fund_deep_dive_picker",
         )
-        if diff:
-            _render_fund_diff(diff, quarter)
-            return
+        # Sync the selection back to session state
+        chosen_diff = next(
+            (d for d in diffs if d.fund.name == chosen), None,
+        )
+        if chosen_diff:
+            st.session_state["selected_fund_cik"] = chosen_diff.fund.cik
+            _render_fund_diff(chosen_diff, quarter)
+        return
 
     # --- Ad-hoc fund (if previously analyzed) ---
     adhoc_diff: FundDiff | None = st.session_state.get(
@@ -324,11 +341,8 @@ def render() -> None:
             st.rerun()
         return
 
-    # --- No fund selected — show lookup ---
-    if quarter and quarter in fund_diffs:
-        st.info("Select a fund from the sidebar to begin.")
-    else:
-        st.info("Run an analysis first using the sidebar.")
+    # --- No analysis data yet ---
+    st.info("Run an analysis first using the sidebar.")
 
     st.divider()
 

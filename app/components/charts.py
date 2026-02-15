@@ -689,16 +689,17 @@ def crowded_trade_dot_plot(
     fig.add_vline(x=0, line_color="gray", line_width=1)
 
     fig.update_layout(
-        title="Crowded Trades — Fund-Level Detail",
+        title=dict(text="Crowded Trades — Fund-Level Detail", y=0.98),
         xaxis_title="← Selling  |  Buying →",
         height=max(400, len(items) * 35),
         xaxis=dict(zeroline=True, showticklabels=False),
         yaxis=dict(tickfont=dict(size=10)),
         legend=dict(
             orientation="h", yanchor="bottom",
-            y=1.02, xanchor="center", x=0.5,
+            y=1.06, xanchor="center", x=0.5,
         ),
-        **_LAYOUT_DEFAULTS,
+        margin=dict(l=150, r=20, t=80, b=40),
+        template="plotly_white",
     )
     return fig
 
