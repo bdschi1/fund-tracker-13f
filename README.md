@@ -1,5 +1,11 @@
 # Fund Tracker 13F
 
+[![CI](https://github.com/bdschi1/fund-tracker-13f/actions/workflows/ci.yml/badge.svg)](https://github.com/bdschi1/fund-tracker-13f/actions)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white)
+![Plotly](https://img.shields.io/badge/Plotly-3F4F75?logo=plotly&logoColor=white)
+
 SEC 13F-HR filing analyzer tracking 52 hedge funds and asset managers across 5 tiers. Surfaces high-conviction moves — new positions, full exits, concentrated adds, and consensus trades — ranked by signal strength (% share change), not dollar size.
 
 ## Pages
